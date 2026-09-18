@@ -1,0 +1,51 @@
+import "dotenv/config";
+
+function required(name: string, fallback?: string): string {
+  const value = process.env[name] ?? fallback;
+  if (value === undefined || value === "") {
+    throw new Error(`Variavel de ambiente obrigatoria ausente: ${name}`);
+  }
+  return value;
+}
+
+function optionalInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = parseInt(raw, 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+export const config = {
+  tabletCloud: {
+    baseUrl: required("TABLETCLOUD_BASE_URL", "https://api.tabletcloud.com.br"),
+    token: required("TABLETCLOUD_TOKEN"),
+    authHeader: process.env.TABLETCLOUD_AUTH_HEADER || "Authorization",
+    authScheme: process.env.TABLETCLOUD_AUTH_SCHEME ?? "Bearer",
+    filiais: required("TABLETCLOUD_FILIAIS", "1")
+      .split(",")
+      .map((f) => f.trim())
+      .filter(Boolean),
+  },
+  polgo: {
+    baseUrl: required("POLGO_BASE_URL", "https://testews.polgo.com.br/polgo"),
+    usuario: required("POLGO_USUARIO"),
+    senha: required("POLGO_SENHA"),
+    campanha: {
+      ano: optionalInt("POLGO_CAMPANHA_ANO", new Date().getFullYear()),
+      identificacao: required("POLGO_CAMPANHA_IDENTIFICACAO"),
+    },
+  },
+  sync: {
+    cron: process.env.SYNC_CRON || "*/10 * * * *",
+    initialLookbackDays: optionalInt("SYNC_INITIAL_LOOKBACK_DAYS", 1),
+    runOnStartup: (process.env.SYNC_RUN_ON_STARTUP ?? "true") === "true",
+  },
+  server: {
+    port: optionalInt("PORT", 3000),
+    adminApiKey: required("ADMIN_API_KEY", "troque_esta_chave"),
+  },
+  database: {
+    file: process.env.DATABASE_FILE || "./data/sync.db",
+  },
+  logLevel: process.env.LOG_LEVEL || "info",
+};
