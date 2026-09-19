@@ -44,8 +44,12 @@ function loadStore(): Store {
 
 const store: Store = loadStore();
 
+// Escrita atomica: grava num arquivo temporario e so substitui o original
+// via rename, evitando corromper o arquivo se o processo cair no meio da gravacao.
 function persist(): void {
-  fs.writeFileSync(storeFile, JSON.stringify(store, null, 2), "utf-8");
+  const tmpFile = `${storeFile}.tmp`;
+  fs.writeFileSync(tmpFile, JSON.stringify(store), "utf-8");
+  fs.renameSync(tmpFile, storeFile);
 }
 
 function cupomKey(vendaId: number, codFilial: number): string {
