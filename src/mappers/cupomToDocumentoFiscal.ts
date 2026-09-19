@@ -31,12 +31,12 @@ export function mapCupomToDocumentoFiscal(cupom: TabletCloudCupom): PolgoDocumen
     codigo: String(item.CodProdutoExterno ?? item.Codproduto ?? ""),
     descricao: item.NomeProduto,
     quantidade: item.Quantidade,
-    valorUnitario: item.Quantidade ? Number((item.Valortotal / item.Quantidade).toFixed(2)) : item.Valortotal,
-    valorTotal: item.Valortotal,
+    valor: item.Valortotal,
   }));
 
   return {
     usuario: cpfCnpj,
+    cnpjCpf: cpfCnpj,
     numeroDocumento,
     dataHoraEmissao: toDateTime(new Date(cupom.Dtmovimento)),
     valorTotal: cupom.Valortotal,

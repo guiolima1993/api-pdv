@@ -7,11 +7,14 @@ export interface PolgoCampanha {
 }
 
 export interface PolgoProdutoServico {
-  codigo?: string;
-  descricao?: string;
-  quantidade?: number;
-  valorUnitario?: number;
-  valorTotal?: number;
+  codigo: string;
+  descricao: string;
+  quantidade: number;
+  valor: number; // valor total do item (quantidade * unitario), conforme doc da Polgo
+  codigoEAN?: string;
+  unidade?: string;
+  categoria?: string[];
+  extra?: string;
 }
 
 export interface PolgoVendedor {
@@ -25,6 +28,7 @@ export interface PolgoConsumidor {
 
 export interface PolgoDocumentoFiscalInsertPayload {
   usuario: string; // CPF/CNPJ do consumidor
+  cnpjCpf?: string; // CPF/CNPJ do consumidor (confirmar com a Polgo a diferenca em relacao a `usuario`)
   numeroDocumento: string;
   dataHoraEmissao: string; // YYYY-MM-DD HH:mm:ss
   valorTotal: number;
