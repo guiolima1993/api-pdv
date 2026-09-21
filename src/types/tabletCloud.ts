@@ -1,55 +1,60 @@
-// Modelos parciais baseados em Fiweb.Models.Venda.Cupom (https://api.tabletcloud.com.br/Help)
+// Modelos parciais baseados na resposta JSON real da API TabletCloud (GET /cupom/get).
+// IMPORTANTE: a documentacao oficial (https://api.tabletcloud.com.br/Help) mostra os campos
+// em PascalCase (ex.: Venda_id), mas o serializer JSON da API retorna todos os campos em
+// camelCase com a primeira letra minuscula (ex.: venda_id, dtmovimento, itens, clientes).
+// Os nomes abaixo foram confirmados via inspecao direta de respostas reais (script checkKeys.ts).
 // Mantidos apenas os campos usados pela integracao com a Polgo.
 
 export interface TabletCloudItem {
-  Codproduto: number;
-  CodProdutoExterno?: number;
-  NomeProduto: string;
-  Quantidade: number;
-  Valortotal: number;
-  Valordesconto?: number;
-  Valoracrescimo?: number;
-  Iscancelado?: boolean;
+  codproduto: number;
+  codProdutoExterno?: number;
+  nomeProduto: string;
+  quantidade: number;
+  valortotal: number;
+  valordesconto?: number;
+  valoracrescimo?: number;
+  iscancelado?: boolean;
 }
 
 export interface TabletCloudCliente {
-  Cod: number;
-  Cliente_id?: number;
-  Cpf_cnpj?: string;
-  Cancelado?: boolean;
-  Email?: string;
-  DadosAdicionais?: {
-    Nome?: string;
-  };
+  cod: number;
+  cliente_id?: number;
+  cpf_cnpj?: string;
+  cancelado?: boolean;
+  email?: string;
+  dadosAdicionais?: {
+    nome?: string;
+  } | null;
 }
 
 export interface TabletCloudFormaPgto {
-  Nome: string;
-  Valortotal: number;
+  nome: string;
+  valortotal: number;
 }
 
 export interface TabletCloudNotaFiscal {
-  Chave_acesso?: string;
-  Cancelado?: boolean;
-  Nnf?: number;
-  Doc_emitido?: boolean;
+  chave_acesso?: string;
+  cancelado?: boolean;
+  nnf?: number;
+  doc_emitido?: boolean;
 }
 
 export interface TabletCloudCupom {
-  Venda_id: number;
-  Venda_id_pdv?: number;
-  Codcupom?: number;
-  Codempresa?: number;
-  Loja_id: number;
-  Terminal_id?: string;
-  Valortotal: number;
-  Isestornado?: boolean;
-  Iscancelado?: boolean;
-  Dtmovimento: string;
-  CodVendedorExterno?: number;
-  NomeVendedor?: string;
-  Itens?: TabletCloudItem[];
-  Clientes?: TabletCloudCliente[];
-  FormaPgtos?: TabletCloudFormaPgto[];
-  Notas?: TabletCloudNotaFiscal[];
+  venda_id: number;
+  venda_id_pdv?: number;
+  codcupom?: number;
+  codempresa?: number;
+  loja_id: number;
+  terminal_id?: string;
+  valortotal: number;
+  isestornado?: boolean;
+  iscancelado?: boolean;
+  dtmovimento: string;
+  codVendedorExterno?: number;
+  nomeVendedor?: string;
+  itens?: TabletCloudItem[];
+  clientes?: TabletCloudCliente[];
+  formaPgtos?: TabletCloudFormaPgto[];
+  notas?: TabletCloudNotaFiscal[];
 }
+

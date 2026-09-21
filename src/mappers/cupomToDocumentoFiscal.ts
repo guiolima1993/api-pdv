@@ -15,42 +15,42 @@ export class UnidentifiedConsumerError extends Error {
  * pois a Polgo usa esse campo para assimilar a venda ao sorteio.
  */
 export function mapCupomToDocumentoFiscal(cupom: TabletCloudCupom): PolgoDocumentoFiscalInsertPayload {
-  const cliente = cupom.Clientes?.find((c) => !c.Cancelado && c.Cpf_cnpj) ?? cupom.Clientes?.[0];
-  const cpfCnpj = cliente?.Cpf_cnpj?.replace(/\D/g, "");
+  const cliente = cupom.clientes?.find((c) => !c.cancelado && c.cpf_cnpj) ?? cupom.clientes?.[0];
+  const cpfCnpj = cliente?.cpf_cnpj?.replace(/\D/g, "");
 
   if (!cpfCnpj) {
-    throw new UnidentifiedConsumerError(cupom.Venda_id, cupom.Loja_id);
+    throw new UnidentifiedConsumerError(cupom.venda_id, cupom.loja_id);
   }
 
-  const chaveAcesso = cupom.Notas?.find((n) => n.Chave_acesso)?.Chave_acesso;
-  const numeroDocumento = chaveAcesso || `${cupom.Loja_id}-${cupom.Venda_id}`;
+  const chaveAcesso = cupom.notas?.find((n) => n.chave_acesso)?.chave_acesso;
+  const numeroDocumento = chaveAcesso || `${cupom.loja_id}-${cupom.venda_id}`;
 
-  const formaPagamento = cupom.FormaPgtos?.map((f) => f.Nome).filter(Boolean).join(",");
+  const formaPagamento = cupom.formaPgtos?.map((f) => f.nome).filter(Boolean).join(",");
 
-  const produtosServicos = cupom.Itens?.filter((i) => !i.Iscancelado).map((item) => ({
-    codigo: String(item.CodProdutoExterno ?? item.Codproduto ?? ""),
-    descricao: item.NomeProduto,
-    quantidade: item.Quantidade,
-    valor: item.Valortotal,
+  const produtosServicos = cupom.itens?.filter((i) => !i.iscancelado).map((item) => ({
+    codigo: String(item.codProdutoExterno ?? item.codproduto ?? ""),
+    descricao: item.nomeProduto,
+    quantidade: item.quantidade,
+    valor: item.valortotal,
   }));
 
   return {
     usuario: cpfCnpj,
     cnpjCpf: cpfCnpj,
     numeroDocumento,
-    dataHoraEmissao: toDateTime(new Date(cupom.Dtmovimento)),
-    valorTotal: cupom.Valortotal,
-    codigoEmitente: String(cupom.Loja_id),
+    dataHoraEmissao: toDateTime(new Date(cupom.dtmovimento)),
+    valorTotal: cupom.valortotal,
+    codigoEmitente: String(cupom.loja_id),
     campanha: {
       ano: config.polgo.campanha.ano,
       identificacao: config.polgo.campanha.identificacao,
     },
     produtosServicos,
     formaPagamento: formaPagamento || undefined,
-    vendedor: cupom.NomeVendedor
-      ? { codigo: cupom.CodVendedorExterno ? String(cupom.CodVendedorExterno) : undefined, nome: cupom.NomeVendedor }
+    vendedor: cupom.nomeVendedor
+      ? { codigo: cupom.codVendedorExterno ? String(cupom.codVendedorExterno) : undefined, nome: cupom.nomeVendedor }
       : undefined,
-    consumidor: cliente?.DadosAdicionais?.Nome ? { nome: cliente.DadosAdicionais.Nome } : undefined,
-    extra: `TabletCloud venda ${cupom.Venda_id} - filial ${cupom.Loja_id}`,
+    consumidor: cliente?.dadosAdicionais?.nome ? { nome: cliente.dadosAdicionais.nome } : undefined,
+    extra: `TabletCloud venda ${cupom.venda_id} - filial ${cupom.loja_id}`,
   };
 }

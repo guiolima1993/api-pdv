@@ -1,15 +1,28 @@
-function pad(n: number): string {
-  return n.toString().padStart(2, "0");
-}
+// Fuso fixo da operacao (Brasil), independente do TZ do host onde o processo roda -
+// evita que a data usada para consultar a TabletCloud fique deslocada em 1 dia.
+const TZ = "America/Sao_Paulo";
 
-/** Formata YYYY-MM-DD (formato aceito pela TabletCloud para date). */
+/** Formata YYYY-MM-DD no fuso America/Sao_Paulo (formato aceito pela TabletCloud para date). */
 export function toDateOnly(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(
+    d
+  );
 }
 
-/** Formata YYYY-MM-DD HH:mm:ss (formato aceito pela Polgo). */
+/** Formata YYYY-MM-DD HH:mm:ss no fuso America/Sao_Paulo (formato aceito pela Polgo). */
 export function toDateTime(d: Date): string {
-  return `${toDateOnly(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23", // hour12:false sofre de um bug do ICU que retorna "24" em vez de "00" a meia-noite
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
 }
 
 /**

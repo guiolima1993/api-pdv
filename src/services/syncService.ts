@@ -19,11 +19,11 @@ export interface SyncSummary {
 }
 
 function isCancelled(cupom: TabletCloudCupom): boolean {
-  return Boolean(cupom.Iscancelado || cupom.Isestornado);
+  return Boolean(cupom.iscancelado || cupom.isestornado);
 }
 
 async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Promise<void> {
-  const existing = getSyncedCupom(cupom.Venda_id, cupom.Loja_id);
+  const existing = getSyncedCupom(cupom.venda_id, cupom.loja_id);
 
   // Ja enviada anteriormente e agora aparece cancelada/estornada no PDV -> cancelar na Polgo tambem.
   if (existing?.status === "sent" && isCancelled(cupom)) {
@@ -32,18 +32,18 @@ async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Prom
         await polgo.cancelarDocumentoFiscal(existing.polgo_document_id);
       }
       upsertSyncedCupom({
-        venda_id: cupom.Venda_id,
-        cod_filial: cupom.Loja_id,
+        venda_id: cupom.venda_id,
+        cod_filial: cupom.loja_id,
         status: "canceled",
         polgo_document_id: existing.polgo_document_id,
         attempts: existing.attempts,
       });
       summary.canceled += 1;
     } catch (err) {
-      logger.error({ err, vendaId: cupom.Venda_id }, "Falha ao cancelar documento fiscal na Polgo");
+      logger.error({ err, vendaId: cupom.venda_id }, "Falha ao cancelar documento fiscal na Polgo");
       upsertSyncedCupom({
-        venda_id: cupom.Venda_id,
-        cod_filial: cupom.Loja_id,
+        venda_id: cupom.venda_id,
+        cod_filial: cupom.loja_id,
         status: "error",
         attempts: existing.attempts + 1,
         last_error: String(err),
@@ -60,7 +60,7 @@ async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Prom
 
   // Venda cancelada/estornada e nunca enviada -> nao ha o que assimilar ao sorteio.
   if (isCancelled(cupom)) {
-    upsertSyncedCupom({ venda_id: cupom.Venda_id, cod_filial: cupom.Loja_id, status: "skipped" });
+    upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped" });
     summary.skipped += 1;
     return;
   }
@@ -69,8 +69,8 @@ async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Prom
     const payload = mapCupomToDocumentoFiscal(cupom);
     const retorno = await polgo.inserirDocumentoFiscal(payload);
     upsertSyncedCupom({
-      venda_id: cupom.Venda_id,
-      cod_filial: cupom.Loja_id,
+      venda_id: cupom.venda_id,
+      cod_filial: cupom.loja_id,
       status: "sent",
       polgo_document_id: retorno.id,
       attempts: (existing?.attempts ?? 0) + 1,
@@ -78,15 +78,15 @@ async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Prom
     summary.sent += 1;
   } catch (err) {
     if (err instanceof UnidentifiedConsumerError) {
-      logger.warn({ vendaId: cupom.Venda_id }, err.message);
-      upsertSyncedCupom({ venda_id: cupom.Venda_id, cod_filial: cupom.Loja_id, status: "skipped", last_error: err.message });
+      logger.warn({ vendaId: cupom.venda_id }, err.message);
+      upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped", last_error: err.message });
       summary.skipped += 1;
       return;
     }
-    logger.error({ err, vendaId: cupom.Venda_id }, "Falha ao enviar documento fiscal para a Polgo");
+    logger.error({ err, vendaId: cupom.venda_id }, "Falha ao enviar documento fiscal para a Polgo");
     upsertSyncedCupom({
-      venda_id: cupom.Venda_id,
-      cod_filial: cupom.Loja_id,
+      venda_id: cupom.venda_id,
+      cod_filial: cupom.loja_id,
       status: "error",
       attempts: (existing?.attempts ?? 0) + 1,
       last_error: String(err),
@@ -106,8 +106,11 @@ export async function runSync(): Promise<SyncSummary> {
 
   logger.info({ from, to }, "Iniciando sincronizacao TabletCloud -> Polgo");
 
+  const filiais = await tabletCloud.resolveFiliais();
+  logger.info({ total: filiais.length }, "Filiais a sincronizar neste ciclo");
+
   for (const { from: chunkFrom, to: chunkTo } of chunkDateRange(from, to)) {
-    const cupons = await tabletCloud.getCuponsInRange(chunkFrom, chunkTo);
+    const cupons = await tabletCloud.getCuponsInRange(chunkFrom, chunkTo, filiais);
     logger.info({ chunkFrom, chunkTo, total: cupons.length }, "Cupons recebidos da TabletCloud");
 
     for (const cupom of cupons) {

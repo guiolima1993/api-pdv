@@ -18,10 +18,13 @@ function optionalInt(name: string, fallback: number): number {
 export const config = {
   tabletCloud: {
     baseUrl: required("TABLETCLOUD_BASE_URL", "https://api.tabletcloud.com.br"),
-    token: required("TABLETCLOUD_TOKEN"),
-    authHeader: process.env.TABLETCLOUD_AUTH_HEADER || "Authorization",
-    authScheme: process.env.TABLETCLOUD_AUTH_SCHEME ?? "Bearer",
-    filiais: required("TABLETCLOUD_FILIAIS", "1")
+    // Fluxo OAuth2 password grant (POST /token) - ver https://api.tabletcloud.com.br/Help
+    username: required("TABLETCLOUD_USERNAME"),
+    password: required("TABLETCLOUD_PASSWORD"),
+    clientId: required("TABLETCLOUD_CLIENT_ID"),
+    clientSecret: required("TABLETCLOUD_CLIENT_SECRET"),
+    // Vazio = descobre automaticamente todas as filiais da conta via GET /filial/get
+    filiais: (process.env.TABLETCLOUD_FILIAIS ?? "")
       .split(",")
       .map((f) => f.trim())
       .filter(Boolean),
