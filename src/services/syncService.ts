@@ -65,7 +65,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
         cod_filial: cupom.loja_id,
         status: "error",
         attempts: existing.attempts + 1,
-        last_error: String(err),
+        last_error: JSON.stringify(describeHttpError(err)),
       });
       summary.errors += 1;
     }
@@ -120,7 +120,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       cod_filial: cupom.loja_id,
       status: "error",
       attempts: (existing?.attempts ?? 0) + 1,
-      last_error: String(err),
+      last_error: JSON.stringify(describeHttpError(err)),
     });
     summary.errors += 1;
   }
