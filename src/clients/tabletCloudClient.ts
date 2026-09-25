@@ -128,42 +128,55 @@ export class TabletCloudClient {
   /**
    * Busca todos os cupons emitidos entre `from` e `to` (inclusive) para as filiais informadas.
    * Divide as filiais em lotes (a API/servidor nao suporta URLs com centenas de codigos)
-   * e pagina automaticamente dentro de cada lote.
+   * e busca varios lotes em paralelo (config.tabletCloud.concurrency), cada um paginando
+   * internamente ate esgotar. Sem paralelismo aqui, contas com muitas filiais nao caberiam
+   * na janela do cron (busca e sequencial e a API so filtra por dia inteiro, nao por hora).
    */
   async getCuponsInRange(from: Date, to: Date, filiais: string[]): Promise<TabletCloudCupom[]> {
     const dataInicial = toDateOnly(from);
     const dataFinal = toDateOnly(to);
-    const results: TabletCloudCupom[] = [];
 
+    const lotes: string[] = [];
     for (let i = 0; i < filiais.length; i += FILIAIS_POR_LOTE) {
-      const lote = filiais.slice(i, i + FILIAIS_POR_LOTE).join(",");
-      // Paginacao da TabletCloud e 1-indexada: offset=0 sempre vem vazio (total_on_this_page=0).
-      let offset = 1;
-      logger.info(
-        { lote: Math.floor(i / FILIAIS_POR_LOTE) + 1, totalLotes: Math.ceil(filiais.length / FILIAIS_POR_LOTE) },
-        "Buscando cupons de um lote de filiais na TabletCloud"
-      );
-
-      while (true) {
-        const token = await this.getAccessToken();
-        const url = `/cupom/get/${offset}/${dataInicial}/${dataFinal}/${lote}`;
-        logger.debug({ url }, "Buscando cupons na TabletCloud");
-        const { data } = await this.http.get<TabletCloudPage<TabletCloudCupom>>(url, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        const items = data?.data ?? [];
-        logger.info(
-          { offset, totalPages: data?.total_pages, totalRecords: data?.total_records },
-          "Pagina de cupons recebida da TabletCloud"
-        );
-        if (items.length === 0) break;
-
-        results.push(...items);
-        if (data.current_page >= data.total_pages) break;
-        offset += 1;
-      }
+      lotes.push(filiais.slice(i, i + FILIAIS_POR_LOTE).join(","));
     }
+
+    const results: TabletCloudCupom[] = [];
+    let nextLoteIndex = 0;
+
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const loteIndex = nextLoteIndex++;
+        if (loteIndex >= lotes.length) return;
+        const lote = lotes[loteIndex];
+        logger.info({ lote: loteIndex + 1, totalLotes: lotes.length }, "Buscando cupons de um lote de filiais na TabletCloud");
+
+        // Paginacao da TabletCloud e 1-indexada: offset=0 sempre vem vazio (total_on_this_page=0).
+        let offset = 1;
+        while (true) {
+          const token = await this.getAccessToken();
+          const url = `/cupom/get/${offset}/${dataInicial}/${dataFinal}/${lote}`;
+          logger.debug({ url }, "Buscando cupons na TabletCloud");
+          const { data } = await this.http.get<TabletCloudPage<TabletCloudCupom>>(url, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          const items = data?.data ?? [];
+          logger.info(
+            { lote: loteIndex + 1, offset, totalPages: data?.total_pages, totalRecords: data?.total_records },
+            "Pagina de cupons recebida da TabletCloud"
+          );
+          if (items.length === 0) break;
+
+          results.push(...items);
+          if (data.current_page >= data.total_pages) break;
+          offset += 1;
+        }
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(config.tabletCloud.concurrency, lotes.length) }, () => worker());
+    await Promise.all(workers);
 
     return results;
   }

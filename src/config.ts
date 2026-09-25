@@ -28,6 +28,9 @@ export const config = {
       .split(",")
       .map((f) => f.trim())
       .filter(Boolean),
+    // Quantos lotes de filiais sao buscados em paralelo na TabletCloud (nao documentado
+    // limite de rate-limit; usado pra nao estourar o tempo do ciclo de sync com muitas filiais).
+    concurrency: optionalInt("TABLETCLOUD_CONCURRENCY", 5),
   },
   polgo: {
     baseUrl: required("POLGO_BASE_URL", "https://testews.polgo.com.br/polgo"),
