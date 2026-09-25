@@ -6,6 +6,7 @@ import { TabletCloudClient } from "../clients/tabletCloudClient";
 import { PolgoClient } from "../clients/polgoClient";
 import { mapCupomToDocumentoFiscal, UnidentifiedConsumerError } from "../mappers/cupomToDocumentoFiscal";
 import { describeHttpError } from "../utils/errorUtils";
+import { TabletCloudCupom } from "../types/tabletCloud";
 
 async function main(): Promise<void> {
   const tabletCloud = new TabletCloudClient();
@@ -16,7 +17,10 @@ async function main(): Promise<void> {
   const cnpjPorFilial = await tabletCloud.getCnpjPorFilial();
 
   const hoje = new Date();
-  const cupons = await tabletCloud.getCuponsInRange(hoje, hoje, filiais);
+  const cupons: TabletCloudCupom[] = [];
+  await tabletCloud.getCuponsInRange(hoje, hoje, filiais, async (pagina) => {
+    cupons.push(...pagina);
+  });
   logger.info({ total: cupons.length }, "Cupons de hoje encontrados na TabletCloud");
 
   let semConsumidor = 0;

@@ -131,8 +131,18 @@ export class TabletCloudClient {
    * e busca varios lotes em paralelo (config.tabletCloud.concurrency), cada um paginando
    * internamente ate esgotar. Sem paralelismo aqui, contas com muitas filiais nao caberiam
    * na janela do cron (busca e sequencial e a API so filtra por dia inteiro, nao por hora).
+   *
+   * Em vez de acumular todos os cupons do dia (todas as filiais) em memoria, cada pagina e
+   * entregue via `onPage` assim que chega e so busca a proxima apos o processamento terminar
+   * (backpressure). Isso mantem o uso de memoria limitado independente do volume total do dia
+   * (essencial com centenas de milhares/milhoes de cupons na campanha inteira).
    */
-  async getCuponsInRange(from: Date, to: Date, filiais: string[]): Promise<TabletCloudCupom[]> {
+  async getCuponsInRange(
+    from: Date,
+    to: Date,
+    filiais: string[],
+    onPage: (cupons: TabletCloudCupom[]) => Promise<void>
+  ): Promise<{ totalFetched: number }> {
     const dataInicial = toDateOnly(from);
     const dataFinal = toDateOnly(to);
 
@@ -141,7 +151,7 @@ export class TabletCloudClient {
       lotes.push(filiais.slice(i, i + FILIAIS_POR_LOTE).join(","));
     }
 
-    const results: TabletCloudCupom[] = [];
+    let totalFetched = 0;
     let nextLoteIndex = 0;
 
     const worker = async (): Promise<void> => {
@@ -168,7 +178,8 @@ export class TabletCloudClient {
           );
           if (items.length === 0) break;
 
-          results.push(...items);
+          totalFetched += items.length;
+          await onPage(items);
           if (data.current_page >= data.total_pages) break;
           offset += 1;
         }
@@ -178,6 +189,6 @@ export class TabletCloudClient {
     const workers = Array.from({ length: Math.min(config.tabletCloud.concurrency, lotes.length) }, () => worker());
     await Promise.all(workers);
 
-    return results;
+    return { totalFetched };
   }
 }

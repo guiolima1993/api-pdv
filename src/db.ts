@@ -197,6 +197,12 @@ export function countByStatus(): Record<string, number> {
   return counts;
 }
 
+export function listByStatus(status: CupomStatus, limit = 20): SyncedCupomRow[] {
+  const rows = Object.values(store.cupons).filter((row) => row.status === status);
+  rows.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  return rows.slice(0, limit);
+}
+
 export function getSyncCursor(): string | undefined {
   return store.state["last_synced_at"];
 }

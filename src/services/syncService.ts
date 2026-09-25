@@ -142,13 +142,13 @@ export async function runSync(): Promise<SyncSummary> {
   const cnpjPorFilial = await tabletCloud.getCnpjPorFilial();
 
   for (const { from: chunkFrom, to: chunkTo } of chunkDateRange(from, to)) {
-    const cupons = await tabletCloud.getCuponsInRange(chunkFrom, chunkTo, filiais);
-    logger.info({ chunkFrom, chunkTo, total: cupons.length }, "Cupons recebidos da TabletCloud");
-
-    await processWithConcurrency(cupons, config.sync.concurrency, async (cupom) => {
-      summary.processed += 1;
-      await processCupom(cupom, cnpjPorFilial, summary);
+    const { totalFetched } = await tabletCloud.getCuponsInRange(chunkFrom, chunkTo, filiais, async (cupons) => {
+      await processWithConcurrency(cupons, config.sync.concurrency, async (cupom) => {
+        summary.processed += 1;
+        await processCupom(cupom, cnpjPorFilial, summary);
+      });
     });
+    logger.info({ chunkFrom, chunkTo, total: totalFetched }, "Cupons recebidos da TabletCloud");
   }
 
   setSyncCursor(to.toISOString());

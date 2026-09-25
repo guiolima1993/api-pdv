@@ -11,6 +11,28 @@ interface LoginRetorno {
   token: string;
 }
 
+// Serializa chamadas para respeitar o limite de taxa da Polgo (recomendado: ate 2
+// requisicoes/segundo). Diferente de um limite de concorrencia, isso garante o
+// espacamento minimo entre requisicoes mesmo com varios workers em paralelo.
+class RateLimiter {
+  private chain: Promise<number> = Promise.resolve(0);
+
+  constructor(private readonly minIntervalMs: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    const myTurn = this.chain.then((lastCall) => {
+      const now = Date.now();
+      const runAt = Math.max(now, lastCall + this.minIntervalMs);
+      return runAt;
+    });
+    this.chain = myTurn;
+    const runAt = await myTurn;
+    const wait = runAt - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    return fn();
+  }
+}
+
 export class PolgoClient {
   private http: AxiosInstance;
   private token: string | null = null;
@@ -19,6 +41,9 @@ export class PolgoClient {
   // preventiva bem antes disso so pra reduzir a chance de usar um token perto do fim
   // da janela, mas o retry reativo em 401 cobre qualquer expiracao inesperada.
   private readonly tokenTtlMs = 24 * 60 * 60 * 1000;
+  // Polgo recomenda ate 2 requisicoes/segundo (confirmado por eles: envios
+  // simultaneos do mesmo numeroDocumento no mesmo segundo geram 429).
+  private readonly rateLimiter = new RateLimiter(500);
 
   constructor() {
     this.http = axios.create({
@@ -58,35 +83,41 @@ export class PolgoClient {
   async inserirDocumentoFiscal(
     payload: PolgoDocumentoFiscalInsertPayload
   ): Promise<PolgoDocumentoFiscalResponse> {
-    return this.withAuthRetry(async () => {
-      const headers = await this.authHeaders();
-      const { data } = await this.http.post<PolgoApiEnvelope<PolgoDocumentoFiscalResponse>>(
-        "/documentoFiscal/v1/inserir",
-        payload,
-        { headers }
-      );
-      return data.retorno;
-    });
+    return this.rateLimiter.run(() =>
+      this.withAuthRetry(async () => {
+        const headers = await this.authHeaders();
+        const { data } = await this.http.post<PolgoApiEnvelope<PolgoDocumentoFiscalResponse>>(
+          "/documentoFiscal/v1/inserir",
+          payload,
+          { headers }
+        );
+        return data.retorno;
+      })
+    );
   }
 
   /** Cancela uma venda ja enviada (ex: estorno detectado no PDV). */
   async cancelarDocumentoFiscal(idDocumentoFiscal: string): Promise<void> {
-    await this.withAuthRetry(async () => {
-      const headers = await this.authHeaders();
-      await this.http.post("/documentoFiscal/v1/documentos/cancelar", { idDocumentoFiscal }, { headers });
-    });
+    await this.rateLimiter.run(() =>
+      this.withAuthRetry(async () => {
+        const headers = await this.authHeaders();
+        await this.http.post("/documentoFiscal/v1/documentos/cancelar", { idDocumentoFiscal }, { headers });
+      })
+    );
   }
 
   /** Busca documentos ja gravados na Polgo (usado pra confirmar que um envio realmente persistiu). */
   async listarDocumentosFiscais(filtros: Record<string, string>, totalPorPagina = 20, pagina = 1): Promise<unknown> {
-    return this.withAuthRetry(async () => {
-      const headers = await this.authHeaders();
-      const { data } = await this.http.get<PolgoApiEnvelope<unknown>>(
-        `/documentoFiscal/v1/documentos/${totalPorPagina}/${pagina}`,
-        { headers, params: filtros }
-      );
-      return data.retorno;
-    });
+    return this.rateLimiter.run(() =>
+      this.withAuthRetry(async () => {
+        const headers = await this.authHeaders();
+        const { data } = await this.http.get<PolgoApiEnvelope<unknown>>(
+          `/documentoFiscal/v1/documentos/${totalPorPagina}/${pagina}`,
+          { headers, params: filtros }
+        );
+        return data.retorno;
+      })
+    );
   }
 
   private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {

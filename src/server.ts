@@ -1,6 +1,6 @@
 import express from "express";
 import { config } from "./config";
-import { countByStatus } from "./db";
+import { countByStatus, listByStatus } from "./db";
 import { triggerSyncInBackground } from "./jobs/syncRunner";
 
 export function createServer() {
@@ -13,6 +13,15 @@ export function createServer() {
 
   app.get("/sync/status", (_req, res) => {
     res.json({ byStatus: countByStatus() });
+  });
+
+  app.get("/sync/errors", (req, res) => {
+    if (req.header("X-API-KEY") !== config.server.adminApiKey) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+    const limit = Number(req.query.limit) || 20;
+    res.json({ errors: listByStatus("error", limit) });
   });
 
   app.post("/sync/trigger", (req, res) => {
