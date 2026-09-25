@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config";
+import { logger } from "./logger";
 
 // Armazenamento em arquivo local (sem dependencias nativas) para funcionar em
 // hospedagens compartilhadas que nao conseguem compilar modulos como better-sqlite3.
@@ -123,10 +124,18 @@ function compactIfNeeded(): void {
   for (const [key, value] of Object.entries(store.state)) {
     lines.push(JSON.stringify({ type: "state", key, value } as LogEntry));
   }
-  const tmpFile = `${logFile}.compact.tmp`;
-  fs.writeFileSync(tmpFile, lines.length > 0 ? lines.join("\n") + "\n" : "", "utf-8");
-  fs.renameSync(tmpFile, logFile);
-  linesSinceCompaction = lines.length;
+  // Nome unico por processo: evita colisao quando duas instancias (ex: durante um
+  // deploy, a antiga ainda encerrando e a nova ja no ar) compactam ao mesmo tempo.
+  const tmpFile = `${logFile}.compact.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmpFile, lines.length > 0 ? lines.join("\n") + "\n" : "", "utf-8");
+    fs.renameSync(tmpFile, logFile);
+    linesSinceCompaction = lines.length;
+  } catch (err) {
+    // Compactacao e apenas uma otimizacao de espaco; se falhar (ex: outra instancia
+    // mexeu no arquivo ao mesmo tempo), so tenta de novo no proximo ciclo.
+    logger.warn({ err: String(err) }, "Falha ao compactar sync.db, tentando novamente depois");
+  }
 }
 
 // Forca a gravacao imediata do lote pendente (fim de ciclo de sync, encerramento do processo, etc).
