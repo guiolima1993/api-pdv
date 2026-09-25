@@ -15,8 +15,10 @@ export class PolgoClient {
   private http: AxiosInstance;
   private token: string | null = null;
   private tokenObtainedAt = 0;
-  // Renova preventivamente antes do JWT expirar; a Polgo nao documenta TTL exato.
-  private readonly tokenTtlMs = 50 * 60 * 1000;
+  // Polgo confirmou token de integracao com validade de 6 meses; renovamos de forma
+  // preventiva bem antes disso so pra reduzir a chance de usar um token perto do fim
+  // da janela, mas o retry reativo em 401 cobre qualquer expiracao inesperada.
+  private readonly tokenTtlMs = 24 * 60 * 60 * 1000;
 
   constructor() {
     this.http = axios.create({
@@ -75,6 +77,18 @@ export class PolgoClient {
     });
   }
 
+  /** Busca documentos ja gravados na Polgo (usado pra confirmar que um envio realmente persistiu). */
+  async listarDocumentosFiscais(filtros: Record<string, string>, totalPorPagina = 20, pagina = 1): Promise<unknown> {
+    return this.withAuthRetry(async () => {
+      const headers = await this.authHeaders();
+      const { data } = await this.http.get<PolgoApiEnvelope<unknown>>(
+        `/documentoFiscal/v1/documentos/${totalPorPagina}/${pagina}`,
+        { headers, params: filtros }
+      );
+      return data.retorno;
+    });
+  }
+
   private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
@@ -83,6 +97,13 @@ export class PolgoClient {
       if (axiosErr.response?.status === 401) {
         logger.warn("Token Polgo invalido/expirado, tentando reautenticar");
         this.token = null;
+        return fn();
+      }
+      // Polgo confirmou: duas requisicoes com o mesmo numeroDocumento no mesmo
+      // segundo resultam em 429 na segunda. Aguarda um pouco e tenta de novo uma vez.
+      if (axiosErr.response?.status === 429) {
+        logger.warn("Polgo retornou 429 (rate limit), tentando novamente em 1s");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         return fn();
       }
       throw err;

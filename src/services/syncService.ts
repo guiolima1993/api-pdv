@@ -4,8 +4,27 @@ import { TabletCloudClient } from "../clients/tabletCloudClient";
 import { PolgoClient } from "../clients/polgoClient";
 import { mapCupomToDocumentoFiscal, UnidentifiedConsumerError } from "../mappers/cupomToDocumentoFiscal";
 import { chunkDateRange } from "../utils/dateUtils";
-import { getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom } from "../db";
+import { describeHttpError } from "../utils/errorUtils";
+import { flush, getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom } from "../db";
 import { TabletCloudCupom } from "../types/tabletCloud";
+
+// Processa a lista com no maximo `limit` itens em voo simultaneamente, mantendo a
+// ordem de disparo mas sem esperar um terminar para comecar o proximo.
+async function processWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  let index = 0;
+  async function runNext(): Promise<void> {
+    const current = index++;
+    if (current >= items.length) return;
+    await worker(items[current]);
+    return runNext();
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => runNext());
+  await Promise.all(workers);
+}
 
 const tabletCloud = new TabletCloudClient();
 const polgo = new PolgoClient();
@@ -22,7 +41,7 @@ function isCancelled(cupom: TabletCloudCupom): boolean {
   return Boolean(cupom.iscancelado || cupom.isestornado);
 }
 
-async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Promise<void> {
+async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, string>, summary: SyncSummary): Promise<void> {
   const existing = getSyncedCupom(cupom.venda_id, cupom.loja_id);
 
   // Ja enviada anteriormente e agora aparece cancelada/estornada no PDV -> cancelar na Polgo tambem.
@@ -40,7 +59,7 @@ async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Prom
       });
       summary.canceled += 1;
     } catch (err) {
-      logger.error({ err, vendaId: cupom.venda_id }, "Falha ao cancelar documento fiscal na Polgo");
+      logger.error({ err: describeHttpError(err), vendaId: cupom.venda_id }, "Falha ao cancelar documento fiscal na Polgo");
       upsertSyncedCupom({
         venda_id: cupom.venda_id,
         cod_filial: cupom.loja_id,
@@ -66,7 +85,19 @@ async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Prom
   }
 
   try {
-    const payload = mapCupomToDocumentoFiscal(cupom);
+    const cnpjEmitente = cnpjPorFilial.get(String(cupom.loja_id));
+    if (!cnpjEmitente) {
+      logger.warn({ vendaId: cupom.venda_id, lojaId: cupom.loja_id }, "Filial sem CNPJ cadastrado na TabletCloud - venda ignorada");
+      upsertSyncedCupom({
+        venda_id: cupom.venda_id,
+        cod_filial: cupom.loja_id,
+        status: "skipped",
+        last_error: "Filial sem CNPJ cadastrado na TabletCloud",
+      });
+      summary.skipped += 1;
+      return;
+    }
+    const payload = mapCupomToDocumentoFiscal(cupom, cnpjEmitente);
     const retorno = await polgo.inserirDocumentoFiscal(payload);
     upsertSyncedCupom({
       venda_id: cupom.venda_id,
@@ -83,7 +114,7 @@ async function processCupom(cupom: TabletCloudCupom, summary: SyncSummary): Prom
       summary.skipped += 1;
       return;
     }
-    logger.error({ err, vendaId: cupom.venda_id }, "Falha ao enviar documento fiscal para a Polgo");
+    logger.error({ err: describeHttpError(err), vendaId: cupom.venda_id }, "Falha ao enviar documento fiscal para a Polgo");
     upsertSyncedCupom({
       venda_id: cupom.venda_id,
       cod_filial: cupom.loja_id,
@@ -108,18 +139,20 @@ export async function runSync(): Promise<SyncSummary> {
 
   const filiais = await tabletCloud.resolveFiliais();
   logger.info({ total: filiais.length }, "Filiais a sincronizar neste ciclo");
+  const cnpjPorFilial = await tabletCloud.getCnpjPorFilial();
 
   for (const { from: chunkFrom, to: chunkTo } of chunkDateRange(from, to)) {
     const cupons = await tabletCloud.getCuponsInRange(chunkFrom, chunkTo, filiais);
     logger.info({ chunkFrom, chunkTo, total: cupons.length }, "Cupons recebidos da TabletCloud");
 
-    for (const cupom of cupons) {
+    await processWithConcurrency(cupons, config.sync.concurrency, async (cupom) => {
       summary.processed += 1;
-      await processCupom(cupom, summary);
-    }
+      await processCupom(cupom, cnpjPorFilial, summary);
+    });
   }
 
   setSyncCursor(to.toISOString());
+  flush();
   logger.info(summary, "Sincronizacao finalizada");
   return summary;
 }

@@ -2,7 +2,7 @@
 // IMPORTANTE: a documentacao oficial (https://api.tabletcloud.com.br/Help) mostra os campos
 // em PascalCase (ex.: Venda_id), mas o serializer JSON da API retorna todos os campos em
 // camelCase com a primeira letra minuscula (ex.: venda_id, dtmovimento, itens, clientes).
-// Os nomes abaixo foram confirmados via inspecao direta de respostas reais (script checkKeys.ts).
+// Os nomes abaixo foram confirmados via inspecao direta de respostas reais da API.
 // Mantidos apenas os campos usados pela integracao com a Polgo.
 
 export interface TabletCloudItem {

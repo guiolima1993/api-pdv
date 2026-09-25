@@ -13,8 +13,13 @@ export class UnidentifiedConsumerError extends Error {
  * Converte um cupom da TabletCloud no payload de POST /documentoFiscal/v1/inserir da Polgo.
  * Lanca UnidentifiedConsumerError quando nao ha CPF/CNPJ do consumidor,
  * pois a Polgo usa esse campo para assimilar a venda ao sorteio.
+ * `cnpjEmitente` e o CNPJ (so digitos) da filial/loja, exigido pela Polgo no lugar
+ * do codigo interno da TabletCloud.
  */
-export function mapCupomToDocumentoFiscal(cupom: TabletCloudCupom): PolgoDocumentoFiscalInsertPayload {
+export function mapCupomToDocumentoFiscal(
+  cupom: TabletCloudCupom,
+  cnpjEmitente: string
+): PolgoDocumentoFiscalInsertPayload {
   const cliente = cupom.clientes?.find((c) => !c.cancelado && c.cpf_cnpj) ?? cupom.clientes?.[0];
   const cpfCnpj = cliente?.cpf_cnpj?.replace(/\D/g, "");
 
@@ -40,7 +45,7 @@ export function mapCupomToDocumentoFiscal(cupom: TabletCloudCupom): PolgoDocumen
     numeroDocumento,
     dataHoraEmissao: toDateTime(new Date(cupom.dtmovimento)),
     valorTotal: cupom.valortotal,
-    codigoEmitente: String(cupom.loja_id),
+    cnpjEmitente,
     campanha: {
       ano: config.polgo.campanha.ano,
       identificacao: config.polgo.campanha.identificacao,

@@ -21,6 +21,7 @@ interface TabletCloudPage<T> {
 interface TabletCloudFilial {
   codigo: number;
   nome: string;
+  cnpj?: string;
 }
 
 // Quantidade de codigos de filial por chamada, para nao estourar limite de tamanho de URL do servidor.
@@ -32,7 +33,7 @@ export class TabletCloudClient {
   private accessToken: string | null = null;
   private tokenObtainedAt = 0;
   private tokenTtlMs = 0;
-  private filiaisCache: string[] | null = null;
+  private filiaisCache: TabletCloudFilial[] | null = null;
   private filiaisCachedAt = 0;
 
   constructor() {
@@ -74,16 +75,9 @@ export class TabletCloudClient {
     return this.accessToken as string;
   }
 
-  /**
-   * Resolve os codigos de filial a sincronizar: usa a lista fixa do .env se configurada,
-   * senao busca todas as filiais da conta (GET /filial/get), com cache de 1h.
-   * Filtra entradas que nao sao lojas de verdade (tabelas de preco, matriz de suporte).
-   */
-  async resolveFiliais(): Promise<string[]> {
-    if (config.tabletCloud.filiais.length > 0) {
-      return config.tabletCloud.filiais;
-    }
-
+  // Busca e filtra as filiais reais da conta (GET /filial/get), com cache de 1h.
+  // Compartilhado por resolveFiliais() e getCnpjPorFilial() pra nao duplicar a chamada.
+  private async fetchFiliais(): Promise<TabletCloudFilial[]> {
     const expired = Date.now() - this.filiaisCachedAt > FILIAIS_CACHE_TTL_MS;
     if (this.filiaisCache && !expired) {
       return this.filiaisCache;
@@ -94,17 +88,41 @@ export class TabletCloudClient {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    const codigos = (data ?? [])
-      .filter((f) => {
-        const nome = (f.nome || "").toUpperCase();
-        return !nome.includes("TABELA DE PRECO") && !nome.includes("MATRIZ SUPORTE");
-      })
-      .map((f) => String(f.codigo));
+    const filiais = (data ?? []).filter((f) => {
+      const nome = (f.nome || "").toUpperCase();
+      return !nome.includes("TABELA DE PRECO") && !nome.includes("MATRIZ SUPORTE");
+    });
 
-    this.filiaisCache = codigos;
+    this.filiaisCache = filiais;
     this.filiaisCachedAt = Date.now();
-    logger.info({ total: codigos.length }, "Lista de filiais TabletCloud atualizada");
-    return codigos;
+    logger.info({ total: filiais.length }, "Lista de filiais TabletCloud atualizada");
+    return filiais;
+  }
+
+  /**
+   * Resolve os codigos de filial a sincronizar: usa a lista fixa do .env se configurada,
+   * senao busca todas as filiais da conta (GET /filial/get), com cache de 1h.
+   */
+  async resolveFiliais(): Promise<string[]> {
+    if (config.tabletCloud.filiais.length > 0) {
+      return config.tabletCloud.filiais;
+    }
+    const filiais = await this.fetchFiliais();
+    return filiais.map((f) => String(f.codigo));
+  }
+
+  /**
+   * Mapa codigo de filial (loja_id) -> CNPJ (so digitos), necessario porque a Polgo
+   * exige `cnpjEmitente` (CNPJ real do estabelecimento) em vez do codigo interno.
+   */
+  async getCnpjPorFilial(): Promise<Map<string, string>> {
+    const filiais = await this.fetchFiliais();
+    const map = new Map<string, string>();
+    for (const f of filiais) {
+      const cnpjDigits = (f.cnpj ?? "").replace(/\D/g, "");
+      if (cnpjDigits) map.set(String(f.codigo), cnpjDigits);
+    }
+    return map;
   }
 
   /**

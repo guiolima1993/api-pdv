@@ -42,6 +42,9 @@ export const config = {
     cron: process.env.SYNC_CRON || "*/10 * * * *",
     initialLookbackDays: optionalInt("SYNC_INITIAL_LOOKBACK_DAYS", 1),
     runOnStartup: (process.env.SYNC_RUN_ON_STARTUP ?? "true") === "true",
+    // Quantos cupons sao processados/enviados a Polgo em paralelo por vez.
+    // Polgo recomendou ate 2 vendas distintas por segundo (sem hard-limit documentado).
+    concurrency: optionalInt("SYNC_CONCURRENCY", 2),
   },
   server: {
     port: optionalInt("PORT", 3000),

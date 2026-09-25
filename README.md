@@ -27,8 +27,11 @@ campanha do sorteio vigente.
 3. Antes do primeiro envio, o serviço se autentica em
    `POST /login/v1/autenticacao` e reaproveita o token (renovando em caso de
    `401`).
-4. Todo cupom processado é registrado em SQLite (`synced_cupons`) com status
+4. Todo cupom processado é registrado em um log append-only
+   ([`src/db.ts`](src/db.ts), arquivo `DATABASE_FILE`) com status
    `sent | skipped | canceled | error`, evitando duplicidade em reprocessamentos.
+   O log é compactado automaticamente quando cresce muito em relação ao
+   número de chaves únicas.
 5. Se uma venda já enviada aparecer cancelada/estornada em uma sincronização
    posterior, o serviço chama
    `POST /documentoFiscal/v1/documentos/cancelar` na Polgo.
@@ -43,12 +46,13 @@ Copie `.env.example` para `.env` e preencha:
 - `POLGO_CAMPANHA_ANO` / `POLGO_CAMPANHA_IDENTIFICACAO`: dados da campanha do
   sorteio, fornecidos pela Polgo.
 - `SYNC_CRON`: frequência de execução (padrão: a cada 10 minutos).
+- `ADMIN_API_KEY`: chave exigida no header `X-API-KEY` para acionar
+  `POST /sync/trigger` manualmente (ex.: via cron-job.org externo).
 
-> **Atenção**: `codigoEmitente` é preenchido hoje com o código interno da
-> filial (`Loja_id`) do TabletCloud. Caso a Polgo exija o CNPJ do
-> estabelecimento (`cnpjEmitente`), ajuste
-> [`src/mappers/cupomToDocumentoFiscal.ts`](src/mappers/cupomToDocumentoFiscal.ts)
-> para buscar o CNPJ via `GET filial/get` do TabletCloud e mapear por loja.
+> **Atenção**: `cnpjEmitente` é preenchido com o CNPJ real de cada filial,
+> obtido via `GET filial/get` do TabletCloud (campo `cnpj`) e mapeado por
+> `loja_id`. Filiais sem CNPJ cadastrado na TabletCloud são ignoradas (vendas
+> registradas como `skipped`).
 
 ## Rodando localmente
 
@@ -87,5 +91,5 @@ docker compose up --build -d
 - **Multi-campanha / multi-filial → múltiplas campanhas Polgo**: hoje há uma
   única campanha configurada globalmente. Se cada filial pertencer a uma
   campanha diferente, será necessário um mapeamento `Loja_id -> campanha`.
-- **CNPJ do emitente**: ver observação acima sobre `codigoEmitente` vs
-  `cnpjEmitente`.
+- **CNPJ do emitente**: resolvido automaticamente via `GET filial/get` da
+  TabletCloud (ver observação acima).
