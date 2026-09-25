@@ -55,9 +55,11 @@ export const config = {
     internalCronEnabled: (process.env.SYNC_INTERNAL_CRON_ENABLED ?? "true") === "true",
     initialLookbackDays: optionalInt("SYNC_INITIAL_LOOKBACK_DAYS", 1),
     runOnStartup: (process.env.SYNC_RUN_ON_STARTUP ?? "true") === "true",
-    // Quantos cupons sao processados/enviados a Polgo em paralelo por vez.
-    // Polgo recomendou ate 2 vendas distintas por segundo (sem hard-limit documentado).
-    concurrency: optionalInt("SYNC_CONCURRENCY", 2),
+    // Quantos cupons sao processados em paralelo por vez (mapeamento local + leitura/escrita
+    // no MySQL). NAO controla a taxa de chamadas a Polgo - isso e' feito a parte pelo
+    // RateLimiter interno do PolgoClient (2 req/s), entao subir esse valor so acelera o
+    // processamento dos ~98% de cupons que nunca chegam a chamar a Polgo (sem CPF/CNPJ).
+    concurrency: optionalInt("SYNC_CONCURRENCY", 20),
   },
   server: {
     port: optionalInt("PORT", 3000),

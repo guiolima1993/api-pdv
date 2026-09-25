@@ -25,7 +25,9 @@ const pool = mysql.createPool({
   user: config.database.user,
   password: config.database.password,
   waitForConnections: true,
-  connectionLimit: 10,
+  // Acompanha o SYNC_CONCURRENCY (processamento paralelo de cupons) para nao virar
+  // o novo gargalo quando o volume de vendas aumentar.
+  connectionLimit: 25,
 });
 
 let readyPromise: Promise<void> | null = null;
