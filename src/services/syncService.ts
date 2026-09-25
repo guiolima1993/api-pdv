@@ -114,13 +114,18 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       summary.skipped += 1;
       return;
     }
-    logger.error({ err: describeHttpError(err), vendaId: cupom.venda_id }, "Falha ao enviar documento fiscal para a Polgo");
+    // Embutido na mensagem (nao so nos campos estruturados) porque o painel simplificado
+    // da Hostinger so exibe o texto da mensagem de log.
+    logger.error(
+      { err: describeHttpError(err), vendaId: cupom.venda_id },
+      `Falha ao enviar documento fiscal para a Polgo (venda ${cupom.venda_id}, filial ${cupom.loja_id}, dtmovimento original "${cupom.dtmovimento}")`
+    );
     upsertSyncedCupom({
       venda_id: cupom.venda_id,
       cod_filial: cupom.loja_id,
       status: "error",
       attempts: (existing?.attempts ?? 0) + 1,
-      last_error: JSON.stringify(describeHttpError(err)),
+      last_error: JSON.stringify({ ...describeHttpError(err), dtmovimentoOriginal: cupom.dtmovimento }),
     });
     summary.errors += 1;
   }
@@ -135,7 +140,9 @@ export async function runSync(): Promise<SyncSummary> {
     ? new Date(cursor)
     : new Date(Date.now() - config.sync.initialLookbackDays * 24 * 60 * 60 * 1000);
 
-  logger.info({ from, to }, "Iniciando sincronizacao TabletCloud -> Polgo");
+  // O painel simplificado da Hostinger so mostra a mensagem, nao os campos estruturados,
+  // por isso o range tambem vai embutido diretamente no texto.
+  logger.info({ from, to }, `Iniciando sincronizacao TabletCloud -> Polgo (de ${from.toISOString()} ate ${to.toISOString()})`);
 
   const filiais = await tabletCloud.resolveFiliais();
   logger.info({ total: filiais.length }, "Filiais a sincronizar neste ciclo");
