@@ -109,7 +109,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     summary.sent += 1;
   } catch (err) {
     if (err instanceof UnidentifiedConsumerError) {
-      logger.warn({ vendaId: cupom.venda_id }, err.message);
+      // Venda sem CPF/CNPJ do consumidor: caso comum e esperado, nao logamos individualmente para nao inundar os logs.
       upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped", last_error: err.message });
       summary.skipped += 1;
       return;
