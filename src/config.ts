@@ -49,6 +49,10 @@ export const config = {
   },
   sync: {
     cron: process.env.SYNC_CRON || "*/10 * * * *",
+    // Desliga o node-cron interno quando um scheduler externo (ex: cron-job.org batendo
+    // em /sync/trigger) ja cobre o mesmo agendamento - evita os dois dispararem juntos
+    // e colidirem (um deles toma 409 "ja em execucao").
+    internalCronEnabled: (process.env.SYNC_INTERNAL_CRON_ENABLED ?? "true") === "true",
     initialLookbackDays: optionalInt("SYNC_INITIAL_LOOKBACK_DAYS", 1),
     runOnStartup: (process.env.SYNC_RUN_ON_STARTUP ?? "true") === "true",
     // Quantos cupons sao processados/enviados a Polgo em paralelo por vez.
