@@ -1,6 +1,6 @@
 import express from "express";
 import { config } from "./config";
-import { countByStatus, listByStatus } from "./db";
+import { countByStatus, getSyncCursor, listByStatus } from "./db";
 import { triggerSyncInBackground } from "./jobs/syncRunner";
 
 export function createServer() {
@@ -12,7 +12,7 @@ export function createServer() {
   });
 
   app.get("/sync/status", (_req, res) => {
-    res.json({ byStatus: countByStatus() });
+    res.json({ byStatus: countByStatus(), lastSyncedAt: getSyncCursor() ?? null });
   });
 
   app.get("/sync/errors", (req, res) => {

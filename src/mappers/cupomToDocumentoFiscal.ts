@@ -9,6 +9,14 @@ export class UnidentifiedConsumerError extends Error {
   }
 }
 
+export class ForaDoPrazoDaCampanhaError extends Error {
+  constructor(vendaId: number, lojaId: number, dtmovimento: string) {
+    super(
+      `Venda ${vendaId} (filial ${lojaId}, dtmovimento ${dtmovimento}) esta fora da janela da campanha (${config.polgo.campanha.inicio} a ${config.polgo.campanha.fim}) - nao enviada a Polgo`
+    );
+  }
+}
+
 /**
  * Converte um cupom da TabletCloud no payload de POST /documentoFiscal/v1/inserir da Polgo.
  * Lanca UnidentifiedConsumerError quando nao ha CPF/CNPJ do consumidor,
@@ -25,6 +33,11 @@ export function mapCupomToDocumentoFiscal(
 
   if (!cpfCnpj) {
     throw new UnidentifiedConsumerError(cupom.venda_id, cupom.loja_id);
+  }
+
+  const dataVenda = cupom.dtmovimento.slice(0, 10);
+  if (dataVenda < config.polgo.campanha.inicio || dataVenda > config.polgo.campanha.fim) {
+    throw new ForaDoPrazoDaCampanhaError(cupom.venda_id, cupom.loja_id, cupom.dtmovimento);
   }
 
   const chaveAcesso = cupom.notas?.find((n) => n.chave_acesso)?.chave_acesso;

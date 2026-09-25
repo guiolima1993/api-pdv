@@ -39,6 +39,12 @@ export const config = {
     campanha: {
       ano: optionalInt("POLGO_CAMPANHA_ANO", new Date().getFullYear()),
       identificacao: required("POLGO_CAMPANHA_IDENTIFICACAO"),
+      // Janela valida de datas de venda aceita pela campanha (a propria Polgo rejeita
+      // fora disso com "Documento fiscal fora do prazo"); filtramos antes de enviar
+      // pra nao desperdicar requisicoes e nao inflar o contador de erros com vendas
+      // legitimamente anteriores/posteriores a campanha (ex: cupons de teste antigos).
+      inicio: required("POLGO_CAMPANHA_INICIO", "2026-09-25"),
+      fim: required("POLGO_CAMPANHA_FIM", "2026-10-31"),
     },
   },
   sync: {

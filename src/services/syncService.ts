@@ -2,7 +2,7 @@ import { config } from "../config";
 import { logger } from "../logger";
 import { TabletCloudClient } from "../clients/tabletCloudClient";
 import { PolgoClient } from "../clients/polgoClient";
-import { mapCupomToDocumentoFiscal, UnidentifiedConsumerError } from "../mappers/cupomToDocumentoFiscal";
+import { ForaDoPrazoDaCampanhaError, mapCupomToDocumentoFiscal, UnidentifiedConsumerError } from "../mappers/cupomToDocumentoFiscal";
 import { chunkDateRange } from "../utils/dateUtils";
 import { describeHttpError } from "../utils/errorUtils";
 import { flush, getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom } from "../db";
@@ -108,8 +108,9 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     });
     summary.sent += 1;
   } catch (err) {
-    if (err instanceof UnidentifiedConsumerError) {
-      // Venda sem CPF/CNPJ do consumidor: caso comum e esperado, nao logamos individualmente para nao inundar os logs.
+    if (err instanceof UnidentifiedConsumerError || err instanceof ForaDoPrazoDaCampanhaError) {
+      // Casos comuns/esperados (sem CPF ou venda anterior/posterior a campanha): nao logamos
+      // individualmente para nao inundar os logs, so marcamos como skipped.
       upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped", last_error: err.message });
       summary.skipped += 1;
       return;
