@@ -27,11 +27,12 @@ campanha do sorteio vigente.
 3. Antes do primeiro envio, o serviço se autentica em
    `POST /login/v1/autenticacao` e reaproveita o token (renovando em caso de
    `401`).
-4. Todo cupom processado é registrado em um log append-only
-   ([`src/db.ts`](src/db.ts), arquivo `DATABASE_FILE`) com status
+4. Todo cupom processado é registrado em MySQL
+   ([`src/db.ts`](src/db.ts), tabelas `synced_cupons`/`sync_state`, variáveis
+   `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`) com status
    `sent | skipped | canceled | error`, evitando duplicidade em reprocessamentos.
-   O log é compactado automaticamente quando cresce muito em relação ao
-   número de chaves únicas.
+   Usa MySQL (não arquivo local) porque hospedagens gerenciadas como a
+   Hostinger não persistem disco local entre deploys.
 5. Se uma venda já enviada aparecer cancelada/estornada em uma sincronização
    posterior, o serviço chama
    `POST /documentoFiscal/v1/documentos/cancelar` na Polgo.

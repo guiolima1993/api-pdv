@@ -60,7 +60,14 @@ export const config = {
     adminApiKey: required("ADMIN_API_KEY", "troque_esta_chave"),
   },
   database: {
-    file: process.env.DATABASE_FILE || "./data/sync.db",
+    // MySQL (nao arquivo local): hospedagens gerenciadas tipo a Hostinger nao
+    // persistem disco local entre deploys, entao o estado do sync (cursor +
+    // status de cada cupom) precisa morar em algo externo ao container.
+    host: required("DB_HOST", "localhost"),
+    port: optionalInt("DB_PORT", 3306),
+    name: required("DB_NAME"),
+    user: required("DB_USER"),
+    password: required("DB_PASSWORD"),
   },
   logLevel: process.env.LOG_LEVEL || "info",
 };

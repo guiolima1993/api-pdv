@@ -1,8 +1,9 @@
-import "../db";
+import { init } from "../db";
 import { logger } from "../logger";
 import { runSync } from "../services/syncService";
 
-runSync()
+init()
+  .then(() => runSync())
   .then((summary) => {
     logger.info(summary, "Sincronizacao manual concluida");
     process.exit(0);

@@ -5,7 +5,7 @@ import { PolgoClient } from "../clients/polgoClient";
 import { ForaDoPrazoDaCampanhaError, mapCupomToDocumentoFiscal, UnidentifiedConsumerError } from "../mappers/cupomToDocumentoFiscal";
 import { chunkDateRange } from "../utils/dateUtils";
 import { describeHttpError } from "../utils/errorUtils";
-import { flush, getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom } from "../db";
+import { getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom } from "../db";
 import { TabletCloudCupom } from "../types/tabletCloud";
 
 // Processa a lista com no maximo `limit` itens em voo simultaneamente, mantendo a
@@ -42,7 +42,7 @@ function isCancelled(cupom: TabletCloudCupom): boolean {
 }
 
 async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, string>, summary: SyncSummary): Promise<void> {
-  const existing = getSyncedCupom(cupom.venda_id, cupom.loja_id);
+  const existing = await getSyncedCupom(cupom.venda_id, cupom.loja_id);
 
   // Ja enviada anteriormente e agora aparece cancelada/estornada no PDV -> cancelar na Polgo tambem.
   if (existing?.status === "sent" && isCancelled(cupom)) {
@@ -50,7 +50,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       if (existing.polgo_document_id) {
         await polgo.cancelarDocumentoFiscal(existing.polgo_document_id);
       }
-      upsertSyncedCupom({
+      await upsertSyncedCupom({
         venda_id: cupom.venda_id,
         cod_filial: cupom.loja_id,
         status: "canceled",
@@ -60,7 +60,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       summary.canceled += 1;
     } catch (err) {
       logger.error({ err: describeHttpError(err), vendaId: cupom.venda_id }, "Falha ao cancelar documento fiscal na Polgo");
-      upsertSyncedCupom({
+      await upsertSyncedCupom({
         venda_id: cupom.venda_id,
         cod_filial: cupom.loja_id,
         status: "error",
@@ -79,7 +79,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
 
   // Venda cancelada/estornada e nunca enviada -> nao ha o que assimilar ao sorteio.
   if (isCancelled(cupom)) {
-    upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped" });
+    await upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped" });
     summary.skipped += 1;
     return;
   }
@@ -88,7 +88,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     const cnpjEmitente = cnpjPorFilial.get(String(cupom.loja_id));
     if (!cnpjEmitente) {
       logger.warn({ vendaId: cupom.venda_id, lojaId: cupom.loja_id }, "Filial sem CNPJ cadastrado na TabletCloud - venda ignorada");
-      upsertSyncedCupom({
+      await upsertSyncedCupom({
         venda_id: cupom.venda_id,
         cod_filial: cupom.loja_id,
         status: "skipped",
@@ -99,7 +99,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     }
     const payload = mapCupomToDocumentoFiscal(cupom, cnpjEmitente);
     const retorno = await polgo.inserirDocumentoFiscal(payload);
-    upsertSyncedCupom({
+    await upsertSyncedCupom({
       venda_id: cupom.venda_id,
       cod_filial: cupom.loja_id,
       status: "sent",
@@ -111,7 +111,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     if (err instanceof UnidentifiedConsumerError || err instanceof ForaDoPrazoDaCampanhaError) {
       // Casos comuns/esperados (sem CPF ou venda anterior/posterior a campanha): nao logamos
       // individualmente para nao inundar os logs, so marcamos como skipped.
-      upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped", last_error: err.message });
+      await upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped", last_error: err.message });
       summary.skipped += 1;
       return;
     }
@@ -121,7 +121,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     const httpErr = describeHttpError(err);
     const mensagemPolgo = (httpErr.data as { mensagem?: string } | undefined)?.mensagem ?? "";
     if (mensagemPolgo.toLowerCase().includes("já inserido") || mensagemPolgo.toLowerCase().includes("ja inserido")) {
-      upsertSyncedCupom({
+      await upsertSyncedCupom({
         venda_id: cupom.venda_id,
         cod_filial: cupom.loja_id,
         status: "skipped",
@@ -136,7 +136,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       { err: httpErr, vendaId: cupom.venda_id },
       `Falha ao enviar documento fiscal para a Polgo (venda ${cupom.venda_id}, filial ${cupom.loja_id}, dtmovimento original "${cupom.dtmovimento}")`
     );
-    upsertSyncedCupom({
+    await upsertSyncedCupom({
       venda_id: cupom.venda_id,
       cod_filial: cupom.loja_id,
       status: "error",
@@ -151,7 +151,7 @@ export async function runSync(): Promise<SyncSummary> {
   const summary: SyncSummary = { processed: 0, sent: 0, canceled: 0, skipped: 0, errors: 0 };
 
   const to = new Date();
-  const cursor = getSyncCursor();
+  const cursor = await getSyncCursor();
   const from = cursor
     ? new Date(cursor)
     : new Date(Date.now() - config.sync.initialLookbackDays * 24 * 60 * 60 * 1000);
@@ -174,8 +174,7 @@ export async function runSync(): Promise<SyncSummary> {
     logger.info({ chunkFrom, chunkTo, total: totalFetched }, "Cupons recebidos da TabletCloud");
   }
 
-  setSyncCursor(to.toISOString());
-  flush();
+  await setSyncCursor(to.toISOString());
   logger.info(summary, "Sincronizacao finalizada");
   return summary;
 }

@@ -11,17 +11,17 @@ export function createServer() {
     res.json({ status: "ok" });
   });
 
-  app.get("/sync/status", (_req, res) => {
-    res.json({ byStatus: countByStatus(), lastSyncedAt: getSyncCursor() ?? null });
+  app.get("/sync/status", async (_req, res) => {
+    res.json({ byStatus: await countByStatus(), lastSyncedAt: (await getSyncCursor()) ?? null });
   });
 
-  app.get("/sync/errors", (req, res) => {
+  app.get("/sync/errors", async (req, res) => {
     if (req.header("X-API-KEY") !== config.server.adminApiKey) {
       res.status(401).json({ message: "Unauthorized" });
       return;
     }
     const limit = Number(req.query.limit) || 20;
-    res.json({ errors: listByStatus("error", limit) });
+    res.json({ errors: await listByStatus("error", limit) });
   });
 
   app.post("/sync/trigger", (req, res) => {
