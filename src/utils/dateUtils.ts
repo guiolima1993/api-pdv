@@ -9,20 +9,16 @@ export function toDateOnly(d: Date): string {
   );
 }
 
-/** Formata YYYY-MM-DD HH:mm:ss no fuso America/Sao_Paulo (formato aceito pela Polgo). */
-export function toDateTime(d: Date): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23", // hour12:false sofre de um bug do ICU que retorna "24" em vez de "00" a meia-noite
-  }).formatToParts(d);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+/**
+ * Converte o `dtmovimento`/`dtabertura`/etc. da TabletCloud (ex.: "2026-09-25T00:00:00")
+ * para o formato "YYYY-MM-DD HH:mm:ss" exigido pela Polgo, SEM passar por `new Date()`.
+ * Esses campos vem sem offset de timezone mas ja representam o horario local
+ * (America/Sao_Paulo); `new Date(str)` interpretaria como horario local do PROCESSO
+ * (UTC na Hostinger) e uma reconversao de TZ deslocaria a data em -3h, empurrando
+ * vendas de madrugada pro dia anterior (rejeitadas pela Polgo como "fora do prazo").
+ */
+export function formatTabletCloudDateTime(raw: string): string {
+  return raw.replace("T", " ").slice(0, 19);
 }
 
 /**

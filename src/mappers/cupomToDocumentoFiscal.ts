@@ -1,7 +1,7 @@
 import { config } from "../config";
 import { TabletCloudCupom } from "../types/tabletCloud";
 import { PolgoDocumentoFiscalInsertPayload } from "../types/polgo";
-import { toDateTime } from "../utils/dateUtils";
+import { formatTabletCloudDateTime } from "../utils/dateUtils";
 
 export class UnidentifiedConsumerError extends Error {
   constructor(vendaId: number, lojaId: number) {
@@ -43,7 +43,7 @@ export function mapCupomToDocumentoFiscal(
     usuario: cpfCnpj,
     cnpjCpf: cpfCnpj,
     numeroDocumento,
-    dataHoraEmissao: toDateTime(new Date(cupom.dtmovimento)),
+    dataHoraEmissao: formatTabletCloudDateTime(cupom.dtmovimento),
     valorTotal: cupom.valortotal,
     cnpjEmitente,
     campanha: {
