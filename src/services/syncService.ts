@@ -115,10 +115,25 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       summary.skipped += 1;
       return;
     }
+    // Polgo ja tem esse numeroDocumento (normalmente sobra de reenvio apos perda do cursor
+    // local) - terminal, nao adianta tentar de novo: sem isso, um cupom em status "error"
+    // fica sendo retentado para sempre em todo ciclo (ver "existing.status !== 'error'" acima).
+    const httpErr = describeHttpError(err);
+    const mensagemPolgo = (httpErr.data as { mensagem?: string } | undefined)?.mensagem ?? "";
+    if (mensagemPolgo.toLowerCase().includes("já inserido") || mensagemPolgo.toLowerCase().includes("ja inserido")) {
+      upsertSyncedCupom({
+        venda_id: cupom.venda_id,
+        cod_filial: cupom.loja_id,
+        status: "skipped",
+        last_error: "Ja existe na Polgo (documento ja inserido) - tratado como concluido",
+      });
+      summary.skipped += 1;
+      return;
+    }
     // Embutido na mensagem (nao so nos campos estruturados) porque o painel simplificado
     // da Hostinger so exibe o texto da mensagem de log.
     logger.error(
-      { err: describeHttpError(err), vendaId: cupom.venda_id },
+      { err: httpErr, vendaId: cupom.venda_id },
       `Falha ao enviar documento fiscal para a Polgo (venda ${cupom.venda_id}, filial ${cupom.loja_id}, dtmovimento original "${cupom.dtmovimento}")`
     );
     upsertSyncedCupom({
@@ -126,7 +141,7 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       cod_filial: cupom.loja_id,
       status: "error",
       attempts: (existing?.attempts ?? 0) + 1,
-      last_error: JSON.stringify({ ...describeHttpError(err), dtmovimentoOriginal: cupom.dtmovimento }),
+      last_error: JSON.stringify({ ...httpErr, dtmovimentoOriginal: cupom.dtmovimento }),
     });
     summary.errors += 1;
   }
