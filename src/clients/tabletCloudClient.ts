@@ -139,6 +139,10 @@ export class TabletCloudClient {
       const lote = filiais.slice(i, i + FILIAIS_POR_LOTE).join(",");
       // Paginacao da TabletCloud e 1-indexada: offset=0 sempre vem vazio (total_on_this_page=0).
       let offset = 1;
+      logger.info(
+        { lote: Math.floor(i / FILIAIS_POR_LOTE) + 1, totalLotes: Math.ceil(filiais.length / FILIAIS_POR_LOTE) },
+        "Buscando cupons de um lote de filiais na TabletCloud"
+      );
 
       while (true) {
         const token = await this.getAccessToken();
@@ -149,6 +153,10 @@ export class TabletCloudClient {
         });
 
         const items = data?.data ?? [];
+        logger.info(
+          { offset, totalPages: data?.total_pages, totalRecords: data?.total_records },
+          "Pagina de cupons recebida da TabletCloud"
+        );
         if (items.length === 0) break;
 
         results.push(...items);
