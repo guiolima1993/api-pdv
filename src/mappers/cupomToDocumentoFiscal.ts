@@ -5,7 +5,9 @@ import { formatTabletCloudDateTime } from "../utils/dateUtils";
 
 export class UnidentifiedConsumerError extends Error {
   constructor(vendaId: number, lojaId: number) {
-    super(`Venda ${vendaId} (filial ${lojaId}) sem CPF/CNPJ do consumidor - nao pode ser enviada a Polgo`);
+    super(
+      `Venda ${vendaId} (filial ${lojaId}) sem CPF de pessoa fisica do consumidor - nao pode ser enviada a Polgo`
+    );
   }
 }
 
@@ -19,7 +21,9 @@ export class ForaDoPrazoDaCampanhaError extends Error {
 
 /**
  * Converte um cupom da TabletCloud no payload de POST /documentoFiscal/v1/inserir da Polgo.
- * Lanca UnidentifiedConsumerError quando nao ha CPF/CNPJ do consumidor,
+ * Lanca UnidentifiedConsumerError quando nao ha CPF de pessoa fisica do consumidor
+ * (clientes identificados so por CNPJ sao tratados como nao identificados: campanhas de
+ * sorteio da Loteria Federal/Nota Fiscal Premiada valem para pessoa fisica, nao empresas),
  * pois a Polgo usa esse campo para assimilar a venda ao sorteio.
  * `cnpjEmitente` e o CNPJ (so digitos) da filial/loja, exigido pela Polgo no lugar
  * do codigo interno da TabletCloud.
@@ -28,7 +32,10 @@ export function mapCupomToDocumentoFiscal(
   cupom: TabletCloudCupom,
   cnpjEmitente: string
 ): PolgoDocumentoFiscalInsertPayload {
-  const cliente = cupom.clientes?.find((c) => !c.cancelado && c.cpf_cnpj) ?? cupom.clientes?.[0];
+  const cliente = cupom.clientes?.find((c) => {
+    if (c.cancelado || !c.cpf_cnpj) return false;
+    return c.cpf_cnpj.replace(/\D/g, "").length === 11;
+  });
   const cpfCnpj = cliente?.cpf_cnpj?.replace(/\D/g, "");
 
   if (!cpfCnpj) {
