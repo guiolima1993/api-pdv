@@ -2,7 +2,13 @@ import { config } from "../config";
 import { logger } from "../logger";
 import { TabletCloudClient } from "../clients/tabletCloudClient";
 import { PolgoClient } from "../clients/polgoClient";
-import { ForaDoPrazoDaCampanhaError, mapCupomToDocumentoFiscal, UnidentifiedConsumerError } from "../mappers/cupomToDocumentoFiscal";
+import {
+  FORA_DA_JANELA_LOCAL_MARKER,
+  ForaDoPrazoDaCampanhaError,
+  isDentroDaJanelaDaCampanha,
+  mapCupomToDocumentoFiscal,
+  UnidentifiedConsumerError,
+} from "../mappers/cupomToDocumentoFiscal";
 import { chunkDateRange } from "../utils/dateUtils";
 import { describeHttpError } from "../utils/errorUtils";
 import { getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom } from "../db";
@@ -73,8 +79,15 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
   }
 
   // Ja processada (enviada, cancelada ou ignorada de forma definitiva) e sem mudanca de estado.
+  // Excecao: pulada pelo filtro LOCAL de janela (POLGO_CAMPANHA_INICIO/FIM) e a janela
+  // configurada agora inclui a data da venda (ex: env ajustada depois de uma prorrogacao
+  // da campanha) - nesse caso volta a ser candidata a envio.
   if (existing && existing.status !== "error") {
-    return;
+    const puladaPorJanelaLocal =
+      existing.status === "skipped" && (existing.last_error ?? "").includes(FORA_DA_JANELA_LOCAL_MARKER);
+    if (!(puladaPorJanelaLocal && isDentroDaJanelaDaCampanha(cupom))) {
+      return;
+    }
   }
 
   // Venda cancelada/estornada e nunca enviada -> nao ha o que assimilar ao sorteio.
@@ -119,13 +132,29 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     // local) - terminal, nao adianta tentar de novo: sem isso, um cupom em status "error"
     // fica sendo retentado para sempre em todo ciclo (ver "existing.status !== 'error'" acima).
     const httpErr = describeHttpError(err);
-    const mensagemPolgo = (httpErr.data as { mensagem?: string } | undefined)?.mensagem ?? "";
-    if (mensagemPolgo.toLowerCase().includes("já inserido") || mensagemPolgo.toLowerCase().includes("ja inserido")) {
+    const mensagemPolgo = ((httpErr.data as { mensagem?: string } | undefined)?.mensagem ?? "").toLowerCase();
+    if (mensagemPolgo.includes("já inserido") || mensagemPolgo.includes("ja inserido")) {
       await upsertSyncedCupom({
         venda_id: cupom.venda_id,
         cod_filial: cupom.loja_id,
         status: "skipped",
         last_error: "Ja existe na Polgo (documento ja inserido) - tratado como concluido",
+      });
+      summary.skipped += 1;
+      return;
+    }
+    // A propria Polgo rejeitou a data da venda como fora do prazo da campanha (a janela
+    // deles diverge da nossa POLGO_CAMPANHA_INICIO/FIM). Retentar nao muda o resultado,
+    // entao e' terminal: so volta a ser enviada se alguem reabrir manualmente no banco.
+    if (mensagemPolgo.includes("fora do prazo")) {
+      await upsertSyncedCupom({
+        venda_id: cupom.venda_id,
+        cod_filial: cupom.loja_id,
+        status: "skipped",
+        attempts: (existing?.attempts ?? 0) + 1,
+        last_error: `Polgo rejeitou como fora do prazo da campanha: ${
+          (httpErr.data as { mensagem?: string } | undefined)?.mensagem
+        } (dtmovimento ${cupom.dtmovimento})`,
       });
       summary.skipped += 1;
       return;
@@ -175,6 +204,10 @@ export async function runSync(): Promise<SyncSummary> {
   }
 
   await setSyncCursor(to.toISOString());
-  logger.info(summary, "Sincronizacao finalizada");
+  // Resumo embutido no texto pelo mesmo motivo do log de inicio (painel da Hostinger).
+  logger.info(
+    summary,
+    `Sincronizacao finalizada (processed=${summary.processed}, sent=${summary.sent}, canceled=${summary.canceled}, skipped=${summary.skipped}, errors=${summary.errors})`
+  );
   return summary;
 }

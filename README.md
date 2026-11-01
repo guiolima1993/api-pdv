@@ -46,6 +46,13 @@ Copie `.env.example` para `.env` e preencha:
 - `POLGO_USUARIO` / `POLGO_SENHA`: credenciais fornecidas pela Polgo (Onboarding).
 - `POLGO_CAMPANHA_ANO` / `POLGO_CAMPANHA_IDENTIFICACAO`: dados da campanha do
   sorteio, fornecidos pela Polgo.
+- `POLGO_CAMPANHA_INICIO` / `POLGO_CAMPANHA_FIM` (`YYYY-MM-DD`): janela de datas
+  de venda aceita pela campanha. Vendas fora dela são marcadas como `skipped`
+  sem chamar a Polgo. Se a janela for alterada depois (ex.: prorrogação), as
+  vendas puladas por esse motivo voltam a ser enviadas automaticamente no
+  próximo ciclo que as buscar na TabletCloud. **Mantenha alinhado com a janela
+  cadastrada na Polgo** — rejeições deles por "fora do prazo" viram `skipped`
+  terminal.
 - `SYNC_CRON`: frequência de execução (padrão: a cada 10 minutos).
 - `ADMIN_API_KEY`: chave exigida no header `X-API-KEY` para acionar
   `POST /sync/trigger` manualmente (ex.: via cron-job.org externo).

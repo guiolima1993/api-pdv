@@ -11,12 +11,24 @@ export class UnidentifiedConsumerError extends Error {
   }
 }
 
+// Marcador gravado no last_error dos cupons pulados pelo filtro local de janela. O
+// syncService usa isso pra reprocessa-los caso a janela configurada mude depois
+// (ex: campanha prorrogada) e a data da venda passe a estar dentro dela.
+// Nao alterar o texto: precisa continuar casando com linhas ja gravadas no banco.
+export const FORA_DA_JANELA_LOCAL_MARKER = "fora da janela da campanha";
+
 export class ForaDoPrazoDaCampanhaError extends Error {
   constructor(vendaId: number, lojaId: number, dtmovimento: string) {
     super(
-      `Venda ${vendaId} (filial ${lojaId}, dtmovimento ${dtmovimento}) esta fora da janela da campanha (${config.polgo.campanha.inicio} a ${config.polgo.campanha.fim}) - nao enviada a Polgo`
+      `Venda ${vendaId} (filial ${lojaId}, dtmovimento ${dtmovimento}) esta ${FORA_DA_JANELA_LOCAL_MARKER} (${config.polgo.campanha.inicio} a ${config.polgo.campanha.fim}) - nao enviada a Polgo`
     );
   }
+}
+
+/** Data da venda (YYYY-MM-DD, horario local da TabletCloud) esta dentro de POLGO_CAMPANHA_INICIO..FIM? */
+export function isDentroDaJanelaDaCampanha(cupom: TabletCloudCupom): boolean {
+  const dataVenda = cupom.dtmovimento.slice(0, 10);
+  return dataVenda >= config.polgo.campanha.inicio && dataVenda <= config.polgo.campanha.fim;
 }
 
 /**
@@ -42,8 +54,7 @@ export function mapCupomToDocumentoFiscal(
     throw new UnidentifiedConsumerError(cupom.venda_id, cupom.loja_id);
   }
 
-  const dataVenda = cupom.dtmovimento.slice(0, 10);
-  if (dataVenda < config.polgo.campanha.inicio || dataVenda > config.polgo.campanha.fim) {
+  if (!isDentroDaJanelaDaCampanha(cupom)) {
     throw new ForaDoPrazoDaCampanhaError(cupom.venda_id, cupom.loja_id, cupom.dtmovimento);
   }
 
