@@ -1,7 +1,8 @@
 import { config } from "../config";
 import { logger } from "../logger";
+import { AxiosError } from "axios";
 import { TabletCloudClient } from "../clients/tabletCloudClient";
-import { PolgoClient } from "../clients/polgoClient";
+import { PolgoClient, PolgoEnvioAdiadoError } from "../clients/polgoClient";
 import {
   FORA_DA_JANELA_LOCAL_MARKER,
   ForaDoPrazoDaCampanhaError,
@@ -41,13 +42,62 @@ export interface SyncSummary {
   canceled: number;
   skipped: number;
   errors: number;
+  // Envios adiados neste ciclo porque a Polgo estava indisponivel (circuit breaker).
+  deferred: number;
+}
+
+// Circuit breaker por ciclo: quando a Polgo fica lenta/fora (timeouts, conexao recusada),
+// cada envio pendente esperaria o timeout inteiro (30s) e um ciclo com dezenas de
+// pendentes levaria dezenas de minutos - bem alem da janela em que a Hostinger derruba
+// o processo por inatividade HTTP. Apos N falhas de rede consecutivas no mesmo ciclo,
+// os demais envios sao adiados (cupom fica em "error" sem bater na Polgo) e o ciclo
+// termina rapido; o proximo ciclo tenta de novo do zero.
+const POLGO_FALHAS_CONSECUTIVAS_PARA_ABRIR = 3;
+const POLGO_INDISPONIVEL_MARKER = "Polgo indisponivel (circuit breaker aberto neste ciclo)";
+
+class PolgoCircuitBreaker {
+  private falhasConsecutivas = 0;
+  private aberto = false;
+
+  isAberto(): boolean {
+    return this.aberto;
+  }
+
+  registrarSucesso(): void {
+    this.falhasConsecutivas = 0;
+  }
+
+  registrarFalhaDeRede(): void {
+    this.falhasConsecutivas += 1;
+    if (!this.aberto && this.falhasConsecutivas >= POLGO_FALHAS_CONSECUTIVAS_PARA_ABRIR) {
+      this.aberto = true;
+      logger.error(
+        `Polgo indisponivel: ${this.falhasConsecutivas} falhas de rede consecutivas - demais envios deste ciclo adiados para o proximo`
+      );
+    }
+  }
+}
+
+// Timeout, DNS, conexao recusada/resetada, 5xx: problemas do lado da Polgo (ou da rede),
+// nao do documento. Qualquer 4xx e' resposta "de verdade" e nao conta.
+function isFalhaDeRedePolgo(err: unknown): boolean {
+  const axiosErr = err as AxiosError;
+  if (!axiosErr?.isAxiosError) return false;
+  const status = axiosErr.response?.status;
+  if (status !== undefined) return status >= 500;
+  return true;
 }
 
 function isCancelled(cupom: TabletCloudCupom): boolean {
   return Boolean(cupom.iscancelado || cupom.isestornado);
 }
 
-async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, string>, summary: SyncSummary): Promise<void> {
+async function processCupom(
+  cupom: TabletCloudCupom,
+  cnpjPorFilial: Map<string, string>,
+  summary: SyncSummary,
+  breaker: PolgoCircuitBreaker
+): Promise<void> {
   const existing = await getSyncedCupom(cupom.venda_id, cupom.loja_id);
 
   // Ja enviada anteriormente e agora aparece cancelada/estornada no PDV -> cancelar na Polgo tambem.
@@ -111,7 +161,23 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
       return;
     }
     const payload = mapCupomToDocumentoFiscal(cupom, cnpjEmitente);
-    const retorno = await polgo.inserirDocumentoFiscal(payload);
+    // So' chega aqui cupom apto (com CPF, dentro da janela). Se a Polgo ja' se mostrou
+    // indisponivel neste ciclo, nao gasta 30s de timeout: adia pro proximo ciclo.
+    if (breaker.isAberto()) {
+      await upsertSyncedCupom({
+        venda_id: cupom.venda_id,
+        cod_filial: cupom.loja_id,
+        status: "error",
+        attempts: existing?.attempts ?? 0,
+        last_error: existing?.last_error ?? POLGO_INDISPONIVEL_MARKER,
+      });
+      summary.deferred += 1;
+      return;
+    }
+    // Rechecado DENTRO do rate limiter: com SYNC_CONCURRENCY=20, varios cupons ja' podem
+    // estar na fila quando o breaker abre - sem isso cada um ainda esperaria o timeout.
+    const retorno = await polgo.inserirDocumentoFiscal(payload, () => breaker.isAberto());
+    breaker.registrarSucesso();
     await upsertSyncedCupom({
       venda_id: cupom.venda_id,
       cod_filial: cupom.loja_id,
@@ -132,6 +198,18 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
     // local) - terminal, nao adianta tentar de novo: sem isso, um cupom em status "error"
     // fica sendo retentado para sempre em todo ciclo (ver "existing.status !== 'error'" acima).
     const httpErr = describeHttpError(err);
+    if (err instanceof PolgoEnvioAdiadoError) {
+      await upsertSyncedCupom({
+        venda_id: cupom.venda_id,
+        cod_filial: cupom.loja_id,
+        status: "error",
+        attempts: existing?.attempts ?? 0,
+        last_error: existing?.last_error ?? POLGO_INDISPONIVEL_MARKER,
+      });
+      summary.deferred += 1;
+      return;
+    }
+    if (isFalhaDeRedePolgo(err)) breaker.registrarFalhaDeRede();
     const mensagemPolgo = ((httpErr.data as { mensagem?: string } | undefined)?.mensagem ?? "").toLowerCase();
     if (mensagemPolgo.includes("já inserido") || mensagemPolgo.includes("ja inserido")) {
       await upsertSyncedCupom({
@@ -177,7 +255,8 @@ async function processCupom(cupom: TabletCloudCupom, cnpjPorFilial: Map<string, 
 }
 
 export async function runSync(): Promise<SyncSummary> {
-  const summary: SyncSummary = { processed: 0, sent: 0, canceled: 0, skipped: 0, errors: 0 };
+  const summary: SyncSummary = { processed: 0, sent: 0, canceled: 0, skipped: 0, errors: 0, deferred: 0 };
+  const breaker = new PolgoCircuitBreaker();
 
   const to = new Date();
   const cursor = await getSyncCursor();
@@ -197,7 +276,7 @@ export async function runSync(): Promise<SyncSummary> {
     const { totalFetched } = await tabletCloud.getCuponsInRange(chunkFrom, chunkTo, filiais, async (cupons) => {
       await processWithConcurrency(cupons, config.sync.concurrency, async (cupom) => {
         summary.processed += 1;
-        await processCupom(cupom, cnpjPorFilial, summary);
+        await processCupom(cupom, cnpjPorFilial, summary, breaker);
       });
     });
     logger.info({ chunkFrom, chunkTo, total: totalFetched }, "Cupons recebidos da TabletCloud");
@@ -207,7 +286,7 @@ export async function runSync(): Promise<SyncSummary> {
   // Resumo embutido no texto pelo mesmo motivo do log de inicio (painel da Hostinger).
   logger.info(
     summary,
-    `Sincronizacao finalizada (processed=${summary.processed}, sent=${summary.sent}, canceled=${summary.canceled}, skipped=${summary.skipped}, errors=${summary.errors})`
+    `Sincronizacao finalizada (processed=${summary.processed}, sent=${summary.sent}, canceled=${summary.canceled}, skipped=${summary.skipped}, errors=${summary.errors}, deferred=${summary.deferred})`
   );
   return summary;
 }

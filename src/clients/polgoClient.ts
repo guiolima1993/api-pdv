@@ -11,6 +11,14 @@ interface LoginRetorno {
   token: string;
 }
 
+// Lancado quando o chamador pediu pra desistir do envio antes dele ir pra rede (ex:
+// circuit breaker do sync aberto enquanto o cupom esperava sua vez no rate limiter).
+export class PolgoEnvioAdiadoError extends Error {
+  constructor() {
+    super("Envio a Polgo adiado: servico indisponivel neste ciclo");
+  }
+}
+
 // Serializa chamadas para respeitar o limite de taxa da Polgo (recomendado: ate 2
 // requisicoes/segundo). Diferente de um limite de concorrencia, isso garante o
 // espacamento minimo entre requisicoes mesmo com varios workers em paralelo.
@@ -79,21 +87,30 @@ export class PolgoClient {
     return { Authorization: token };
   }
 
-  /** Envia uma nova venda para a Polgo assimilar ao sorteio da campanha configurada. */
+  /**
+   * Envia uma nova venda para a Polgo assimilar ao sorteio da campanha configurada.
+   * `deveAdiar` e' consultado logo antes da requisicao sair (ja dentro do rate limiter);
+   * se retornar true, lanca PolgoEnvioAdiadoError sem tocar na rede.
+   */
   async inserirDocumentoFiscal(
-    payload: PolgoDocumentoFiscalInsertPayload
+    payload: PolgoDocumentoFiscalInsertPayload,
+    deveAdiar: () => boolean = () => false
   ): Promise<PolgoDocumentoFiscalResponse> {
-    return this.rateLimiter.run(() =>
-      this.withAuthRetry(async () => {
+    if (deveAdiar()) throw new PolgoEnvioAdiadoError();
+    return this.rateLimiter.run(() => {
+      if (deveAdiar()) throw new PolgoEnvioAdiadoError();
+      return this.withAuthRetry(async () => {
         const headers = await this.authHeaders();
         const { data } = await this.http.post<PolgoApiEnvelope<PolgoDocumentoFiscalResponse>>(
           "/documentoFiscal/v1/inserir",
           payload,
-          { headers }
+          // Menor que o timeout padrao do client: com a Polgo degradada, cada envio
+          // pendente segura o ciclo inteiro por esse tempo (ver circuit breaker no sync).
+          { headers, timeout: 15_000 }
         );
         return data.retorno;
-      })
-    );
+      });
+    });
   }
 
   /** Cancela uma venda ja enviada (ex: estorno detectado no PDV). */
