@@ -1,3 +1,5 @@
+import axios from "axios";
+import { config } from "../config";
 import { logger } from "../logger";
 import { runSync, SyncSummary } from "../services/syncService";
 import { describeHttpError } from "../utils/errorUtils";
@@ -10,6 +12,32 @@ export function isSyncRunning(): boolean {
   return running;
 }
 
+// Mantem o processo "ativo" aos olhos da hospedagem enquanto o sync roda (ver
+// config.sync.keepAliveUrl). Retorna a funcao que para o ping.
+function startKeepAlive(): () => void {
+  const url = config.sync.keepAliveUrl;
+  if (!url) return () => undefined;
+  let avisouFalha = false;
+  const timer = setInterval(() => {
+    axios.get(url, { timeout: 5_000 }).catch((err) => {
+      if (!avisouFalha) {
+        avisouFalha = true;
+        logger.warn({ err: describeHttpError(err), url }, "Keep-alive do sync falhou (seguira tentando em silencio)");
+      }
+    });
+  }, config.sync.keepAliveIntervalMs);
+  return () => clearInterval(timer);
+}
+
+async function runGuarded(): Promise<SyncSummary> {
+  const stopKeepAlive = startKeepAlive();
+  try {
+    return await runSync();
+  } finally {
+    stopKeepAlive();
+  }
+}
+
 // Roda a sincronizacao e aguarda o resultado (usado quando quem chama precisa
 // do resumo, ex.: script de trigger manual local).
 export async function runSyncSafely(): Promise<SyncSummary | null> {
@@ -19,7 +47,7 @@ export async function runSyncSafely(): Promise<SyncSummary | null> {
   }
   running = true;
   try {
-    return await runSync();
+    return await runGuarded();
   } catch (err) {
     logger.error({ err: describeHttpError(err) }, "Erro inesperado durante a sincronizacao");
     throw err;
@@ -37,7 +65,7 @@ export function triggerSyncInBackground(): { accepted: boolean } {
     return { accepted: false };
   }
   running = true;
-  runSync()
+  runGuarded()
     .catch((err) => {
       logger.error({ err: describeHttpError(err) }, "Erro inesperado durante a sincronizacao em background");
     })

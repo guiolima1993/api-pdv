@@ -53,6 +53,14 @@ export const config = {
     // em /sync/trigger) ja cobre o mesmo agendamento - evita os dois dispararem juntos
     // e colidirem (um deles toma 409 "ja em execucao").
     internalCronEnabled: (process.env.SYNC_INTERNAL_CRON_ENABLED ?? "true") === "true",
+    // URL publica do proprio servico (ex: https://api-pdv.exemplo.com.br/health). Enquanto
+    // uma sincronizacao esta em andamento, o processo faz um GET nela a cada poucos
+    // segundos. Motivo: a Hostinger (e hospedagens Node gerenciadas parecidas) encerra
+    // o processo quando nao ha requisicoes HTTP de entrada por ~30-40s - e o /sync/trigger
+    // responde 202 na hora, entao um ciclo longo (Polgo lenta, backlog) morre no meio.
+    // Vazio = desativado.
+    keepAliveUrl: process.env.SYNC_KEEPALIVE_URL ?? "",
+    keepAliveIntervalMs: optionalInt("SYNC_KEEPALIVE_INTERVAL_MS", 10_000),
     initialLookbackDays: optionalInt("SYNC_INITIAL_LOOKBACK_DAYS", 1),
     runOnStartup: (process.env.SYNC_RUN_ON_STARTUP ?? "true") === "true",
     // Quantos cupons sao processados em paralelo por vez (mapeamento local + leitura/escrita

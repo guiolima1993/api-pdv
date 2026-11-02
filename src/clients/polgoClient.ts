@@ -106,7 +106,8 @@ export class PolgoClient {
           payload,
           // Menor que o timeout padrao do client: com a Polgo degradada, cada envio
           // pendente segura o ciclo inteiro por esse tempo (ver circuit breaker no sync).
-          { headers, timeout: 15_000 }
+          // Saudavel, a Polgo responde em bem menos de 1s.
+          { headers, timeout: 10_000 }
         );
         return data.retorno;
       });

@@ -54,6 +54,12 @@ Copie `.env.example` para `.env` e preencha:
   cadastrada na Polgo** — rejeições deles por "fora do prazo" viram `skipped`
   terminal.
 - `SYNC_CRON`: frequência de execução (padrão: a cada 10 minutos).
+- `SYNC_KEEPALIVE_URL`: URL pública do próprio serviço (ex.:
+  `https://api-pdv.seudominio.com.br/health`). Enquanto uma sincronização roda,
+  o processo faz um GET nela a cada 10 s (`SYNC_KEEPALIVE_INTERVAL_MS`) para a
+  hospedagem não encerrar o processo por "inatividade HTTP" no meio de um ciclo
+  longo — a Hostinger faz isso após ~30–40 s sem requisições de entrada, e o
+  `POST /sync/trigger` responde `202` imediatamente. Vazio = desativado.
 - `ADMIN_API_KEY`: chave exigida no header `X-API-KEY` para acionar
   `POST /sync/trigger` manualmente (ex.: via cron-job.org externo).
 
