@@ -88,8 +88,19 @@ function isFalhaDeRedePolgo(err: unknown): boolean {
   return true;
 }
 
+const VENDA_CANCELADA_MARKER = "Venda cancelada/estornada no PDV";
+
+function temNotaFiscalValida(cupom: TabletCloudCupom): boolean {
+  return (cupom.notas ?? []).some(
+    (n) => n.chave_acesso && n.doc_emitido && !n.cancelado && (n.status_sefaz ?? "100") === "100"
+  );
+}
+
+// A TabletCloud marca `iscancelado` em vendas de mesa com NFC-e autorizada e nao cancelada
+// (ex: item cancelado antes do fechamento). Nesses casos a venda e' valida.
 function isCancelled(cupom: TabletCloudCupom): boolean {
-  return Boolean(cupom.iscancelado || cupom.isestornado);
+  if (cupom.isestornado) return true;
+  return Boolean(cupom.iscancelado) && !temNotaFiscalValida(cupom);
 }
 
 async function processCupom(
@@ -135,14 +146,24 @@ async function processCupom(
   if (existing && existing.status !== "error") {
     const puladaPorJanelaLocal =
       existing.status === "skipped" && (existing.last_error ?? "").includes(FORA_DA_JANELA_LOCAL_MARKER);
-    if (!(puladaPorJanelaLocal && isDentroDaJanelaDaCampanha(cupom))) {
+    // Puladas como canceladas (registros antigos sem last_error) que agora sao validas.
+    const puladaComoCancelada =
+      existing.status === "skipped" &&
+      (!existing.last_error || existing.last_error.includes(VENDA_CANCELADA_MARKER)) &&
+      !isCancelled(cupom);
+    if (!(puladaPorJanelaLocal && isDentroDaJanelaDaCampanha(cupom)) && !puladaComoCancelada) {
       return;
     }
   }
 
   // Venda cancelada/estornada e nunca enviada -> nao ha o que assimilar ao sorteio.
   if (isCancelled(cupom)) {
-    await upsertSyncedCupom({ venda_id: cupom.venda_id, cod_filial: cupom.loja_id, status: "skipped" });
+    await upsertSyncedCupom({
+      venda_id: cupom.venda_id,
+      cod_filial: cupom.loja_id,
+      status: "skipped",
+      last_error: VENDA_CANCELADA_MARKER,
+    });
     summary.skipped += 1;
     return;
   }

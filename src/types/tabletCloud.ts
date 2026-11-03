@@ -37,6 +37,7 @@ export interface TabletCloudNotaFiscal {
   cancelado?: boolean;
   nnf?: number;
   doc_emitido?: boolean;
+  status_sefaz?: string;
 }
 
 export interface TabletCloudCupom {
