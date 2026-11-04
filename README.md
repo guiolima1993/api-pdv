@@ -40,9 +40,13 @@ campanha do sorteio vigente.
    `sent | skipped | canceled | error`, evitando duplicidade em reprocessamentos.
    Usa MySQL (não arquivo local) porque hospedagens gerenciadas como a
    Hostinger não persistem disco local entre deploys.
-5. Se uma venda já enviada aparecer cancelada/estornada em uma sincronização
+5. Se uma venda já enviada aparecer **estornada** em uma sincronização
    posterior, o serviço chama
    `POST /documentoFiscal/v1/documentos/cancelar` na Polgo.
+   A marca `iscancelado` do PDV, sozinha, **não bloqueia o envio nem cancela
+   documentos já enviados**, inclusive quando `status_sefaz` vem como `0`.
+   A conferência da validade fiscal cabe à Polgo na apuração. A regra de
+   estorno (`isestornado`) permanece distinta.
 
 ## Configuração
 
@@ -144,8 +148,9 @@ npm run sync:recuperar-editados -- --arquivo=/caminho/privado/cupons.json --envi
 
 O envio exige MySQL acessível e a campanha configurada cobrindo a data
 original da venda; ele não ignora a janela nem as rejeições da Polgo.
-Data, valor e número da nota são comparados com a TabletCloud antes de
-enviar. Um bloqueio MySQL compartilhado impede execução simultânea do cron,
+Data, valor, número e chave da nota emitida são comparados com a TabletCloud
+antes de enviar; o status SEFAZ não é requisito dessa recuperação autorizada.
+Um bloqueio MySQL compartilhado impede execução simultânea do cron,
 do reprocessamento e da recuperação (todos devem usar esta versão).
 O resultado é salvo em `synced_cupons`, e a origem autorizada do CPF vai
 no campo `extra` da Polgo. A simulação não verifica duplicidade no banco;

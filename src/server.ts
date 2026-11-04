@@ -27,7 +27,7 @@ export function createServer() {
   app.use(express.json());
 
   app.get("/health", (_req, res) => {
-    res.setHeader("X-PDV-Release", "edited-cupons-2");
+    res.setHeader("X-PDV-Release", "edited-cupons-3");
     res.json({ status: "ok" });
   });
 

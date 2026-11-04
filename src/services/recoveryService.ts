@@ -1,6 +1,6 @@
 import { TabletCloudClient } from "../clients/tabletCloudClient";
 import { getSyncedCupom, withSyncLock } from "../db";
-import { isNotaFiscalValida, mapCupomToDocumentoFiscal } from "../mappers/cupomToDocumentoFiscal";
+import { mapCupomToDocumentoFiscal } from "../mappers/cupomToDocumentoFiscal";
 import { parseDateOnly } from "../utils/dateUtils";
 import { isCancelled, processCupom, SyncSummary } from "./syncService";
 
@@ -63,7 +63,7 @@ export async function recuperarCuponsEditados(input: unknown, enviar = false) {
         throw new Error(`Filial ${correcao.filial} fora das filiais configuradas`);
       }
       const cupom = await tabletCloud.getCupom(correcao.vendaId, correcao.filial);
-      const nota = cupom.notas?.find((n) => n.nnf === correcao.numeroNota && isNotaFiscalValida(n));
+      const nota = cupom.notas?.find((n) => n.nnf === correcao.numeroNota && n.chave_acesso && n.doc_emitido);
       if (
         cupom.dtmovimento.slice(0, 10) !== correcao.dataVenda ||
         Math.round(cupom.valortotal * 100) !== Math.round(correcao.valorTotal * 100) ||

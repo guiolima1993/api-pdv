@@ -174,6 +174,48 @@ test("already-sent CPF edits do not resend; reversal still cancels in Polgo", as
   assert.equal(isCancelled(cupom({ iscancelado: true })), false);
 });
 
+test("PDV canceled flag and SEFAZ 0 do not block a CPF added later", async () => {
+  cupons[0].iscancelado = true;
+  cupons[0].notas[0].status_sefaz = "0";
+  assert.equal((await runSync(dayRange)).skipped, 1);
+  assert.match(rows.get(key(101, 10)).last_error, /sem CPF/);
+  cupons[0].clientes = [{ cod: 1, cpf_cnpj: CPF }];
+  assert.equal((await runSync(dayRange)).sent, 1);
+  assert.equal(sent[0].usuario, CPF);
+  assert.equal(sent[0].numeroDocumento, "nota-teste");
+  assert.equal((await runSync(dayRange)).sent, 0);
+  assert.equal(canceled.length, 0);
+});
+
+test("legacy canceled skips recover even when the PDV flag remains set", async () => {
+  for (const reason of [null, "Venda cancelada/estornada no PDV"]) {
+    seed("skipped", reason);
+    cupons[0].iscancelado = true;
+    cupons[0].clientes = [{ cod: 1, cpf_cnpj: CPF }];
+    cupons[0].notas[0].status_sefaz = "0";
+    assert.equal((await runSync(dayRange)).sent, 1);
+  }
+});
+
+test("PDV canceled flag never cancels an already sent fiscal document", async () => {
+  seed("sent", null, { polgo_document_id: "polgo-existing" });
+  cupons[0].iscancelado = true;
+  cupons[0].notas[0].status_sefaz = "0";
+  assert.equal((await runSync(dayRange)).canceled, 0);
+  assert.equal(canceled.length, 0);
+  assert.equal(rows.get(key(101, 10)).status, "sent");
+});
+
+test("authorized proof recovery accepts issued notes with SEFAZ 0 but not reversals", async () => {
+  seed();
+  cupons[0].iscancelado = true;
+  cupons[0].notas[0].status_sefaz = "0";
+  assert.equal((await recuperarCuponsEditados([correcao()], true))[0].resultado, "enviado");
+  cupons[0].isestornado = true;
+  await assert.rejects(recuperarCuponsEditados([correcao()], true), /cancelado\/estornado/);
+  assert.equal(sent.length, 1);
+});
+
 test("five-minute edit crossing midnight is searched and sent in the next cycle", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-11-03T03:06:00.000Z") });
   seed();
@@ -431,6 +473,6 @@ test("coupon status database failure returns 503 without stopping the HTTP serve
   assert.match((await status.json()).message, /Nao foi possivel consultar/);
   const health = await fetch(`${base}/health`);
   assert.equal(health.status, 200);
-  assert.equal(health.headers.get("x-pdv-release"), "edited-cupons-2");
+  assert.equal(health.headers.get("x-pdv-release"), "edited-cupons-3");
   assert.deepEqual(await health.json(), { status: "ok" });
 });

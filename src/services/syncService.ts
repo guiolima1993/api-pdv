@@ -10,7 +10,6 @@ import {
   mapCupomToDocumentoFiscal,
   SEM_CPF_MARKER,
   getCpfConsumidor,
-  isNotaFiscalValida,
   UnidentifiedConsumerError,
 } from "../mappers/cupomToDocumentoFiscal";
 import { chunkDateRange } from "../utils/dateUtils";
@@ -93,11 +92,10 @@ function isFalhaDeRedePolgo(err: unknown): boolean {
 
 const VENDA_CANCELADA_MARKER = "Venda cancelada/estornada no PDV";
 
-// A TabletCloud marca `iscancelado` em vendas de mesa com NFC-e autorizada e nao cancelada
-// (ex: item cancelado antes do fechamento). Nesses casos a venda e' valida.
+// `iscancelado` do PDV nao bloqueia a integracao: a validade fiscal e conferida
+// pela Polgo na apuracao. Estorno continua seguindo a regra anterior.
 export function isCancelled(cupom: TabletCloudCupom): boolean {
-  if (cupom.isestornado) return true;
-  return Boolean(cupom.iscancelado) && !(cupom.notas ?? []).some(isNotaFiscalValida);
+  return Boolean(cupom.isestornado);
 }
 
 export async function processCupom(
@@ -109,7 +107,7 @@ export async function processCupom(
 ): Promise<void> {
   const existing = await getSyncedCupom(cupom.venda_id, cupom.loja_id);
 
-  // Ja enviada anteriormente e agora aparece cancelada/estornada no PDV -> cancelar na Polgo tambem.
+  // Ja enviada anteriormente e agora aparece estornada no PDV -> cancelar na Polgo tambem.
   if (existing?.status === "sent" && isCancelled(cupom)) {
     try {
       if (existing.polgo_document_id) {
@@ -163,7 +161,7 @@ export async function processCupom(
     }
   }
 
-  // Venda cancelada/estornada e nunca enviada -> nao ha o que assimilar ao sorteio.
+  // Venda estornada e nunca enviada -> nao ha o que assimilar ao sorteio.
   if (isCancelled(cupom)) {
     await upsertSyncedCupom({
       venda_id: cupom.venda_id,
