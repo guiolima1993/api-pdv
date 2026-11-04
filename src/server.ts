@@ -4,6 +4,8 @@ import { countByStatus, getSyncCursor, getSyncedCupom, listByStatus } from "./db
 import { triggerSyncInBackground } from "./jobs/syncRunner";
 import { parseCuponsEditados, recuperarCuponsEditados } from "./services/recoveryService";
 import { parseDateOnly } from "./utils/dateUtils";
+import { logger } from "./logger";
+import { describeHttpError } from "./utils/errorUtils";
 
 const MAX_DIAS_REPROCESSAMENTO = 31;
 const MAX_CUPONS_RECUPERACAO = 30;
@@ -25,6 +27,7 @@ export function createServer() {
   app.use(express.json());
 
   app.get("/health", (_req, res) => {
+    res.setHeader("X-PDV-Release", "edited-cupons-2");
     res.json({ status: "ok" });
   });
 
@@ -46,12 +49,17 @@ export function createServer() {
       res.status(400).json({ message: "Filial e vendaId devem ser numeros inteiros positivos" });
       return;
     }
-    const cupom = await getSyncedCupom(vendaId, filial);
-    if (!cupom) {
-      res.status(404).json({ message: "Cupom ainda nao processado pelo sync" });
-      return;
+    try {
+      const cupom = await getSyncedCupom(vendaId, filial);
+      if (!cupom) {
+        res.status(404).json({ message: "Cupom ainda nao processado pelo sync" });
+        return;
+      }
+      res.json({ cupom });
+    } catch (err) {
+      logger.error({ err: describeHttpError(err), vendaId, filial }, "Falha ao consultar status do cupom");
+      res.status(503).json({ message: "Nao foi possivel consultar o cupom; tente novamente" });
     }
-    res.json({ cupom });
   });
 
   app.post("/sync/trigger", (req, res) => {
@@ -59,7 +67,7 @@ export function createServer() {
     const de = typeof req.query.de === "string" ? req.query.de : undefined;
     const ate = typeof req.query.ate === "string" ? req.query.ate : undefined;
     let range: { from: Date; to: Date } | undefined;
-    if (de || ate) {
+    if (req.query.de !== undefined || req.query.ate !== undefined) {
       try {
         if (!de || !ate) throw new Error("Informe de e ate juntos (YYYY-MM-DD)");
         range = { from: parseDateOnly(de), to: parseDateOnly(ate) };
@@ -109,6 +117,7 @@ export function createServer() {
       res.json({ enviar: body.enviar === true, resultados });
     } catch (err) {
       const message = errorMessage(err);
+      logger.error({ err: describeHttpError(err) }, "Falha na recuperacao de cupons editados");
       res.status(message.startsWith("Outra sincronizacao") ? 409 : 422).json({ message });
     }
   });

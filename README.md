@@ -174,7 +174,8 @@ docker compose up --build -d
 
 ## Endpoints HTTP
 
-- `GET /health` — healthcheck simples.
+- `GET /health` — healthcheck simples. O header `X-PDV-Release` identifica
+  a publicação para conferência após o deploy, sem alterar o corpo da resposta.
 - `GET /sync/status` — contagem de cupons por status.
 - `POST /sync/trigger` — dispara uma sincronização manual. Requer header
   `X-API-KEY: <ADMIN_API_KEY>`. Com `?de=YYYY-MM-DD&ate=YYYY-MM-DD` (máx. 31
@@ -182,6 +183,8 @@ docker compose up --build -d
 - `GET /sync/errors` — últimos cupons com erro (`X-API-KEY`).
 - `GET /sync/cupom/:filial/:vendaId` — status gravado do cupom (`sent`,
   `skipped`, `last_error`, `polgo_document_id`) (`X-API-KEY`).
+  Retorna `404` se não foi processado e `503` se a consulta ao banco falhar,
+  sem interromper o servidor.
 - `POST /sync/recuperar-editados` — mesma recuperação do script acima, em
   produção (`X-API-KEY`). Corpo `{ "enviar": false, "cupons": [ ... ] }` (máx.
   30); sem `"enviar": true` só confere e simula.

@@ -380,6 +380,8 @@ test("production admin endpoints replay ranges, query status and recover edited 
   assert.equal((await call("/sync/trigger?de=2026-11-03", { method: "POST" })).status, 400);
   assert.equal((await call("/sync/trigger?de=2026-11-03&ate=2026-11-02", { method: "POST" })).status, 400);
   assert.equal((await call("/sync/trigger?de=2026-10-01&ate=2026-11-30", { method: "POST" })).status, 400);
+  assert.equal((await call("/sync/trigger?de[]=2026-11-02&ate[]=2026-11-02", { method: "POST" })).status, 400);
+  assert.equal((await call("/sync/trigger?de=&ate=", { method: "POST" })).status, 400);
   assert.equal(ranges.length, 0);
 
   const trigger = await call("/sync/trigger?de=2026-11-02&ate=2026-11-02", { method: "POST" });
@@ -415,4 +417,20 @@ test("production admin endpoints replay ranges, query status and recover edited 
   const status = await call("/sync/cupom/10/101");
   assert.equal(status.status, 200);
   assert.equal((await status.json()).cupom.status, "sent");
+});
+
+test("coupon status database failure returns 503 without stopping the HTTP server", async (t) => {
+  const { createServer } = require("../dist/server");
+  config.server.adminApiKey = "admin-test";
+  t.mock.method(db, "getSyncedCupom", async () => { throw new Error("Database unavailable"); });
+  const server = createServer().listen(0);
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const status = await fetch(`${base}/sync/cupom/10/101`, { headers: { "X-API-KEY": "admin-test" } });
+  assert.equal(status.status, 503);
+  assert.match((await status.json()).message, /Nao foi possivel consultar/);
+  const health = await fetch(`${base}/health`);
+  assert.equal(health.status, 200);
+  assert.equal(health.headers.get("x-pdv-release"), "edited-cupons-2");
+  assert.deepEqual(await health.json(), { status: "ok" });
 });
