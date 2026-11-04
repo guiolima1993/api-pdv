@@ -15,6 +15,16 @@ function optionalInt(name: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function nonNegativeInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Variavel ${name} deve ser um inteiro maior ou igual a zero`);
+  }
+  return value;
+}
+
 export const config = {
   tabletCloud: {
     baseUrl: required("TABLETCLOUD_BASE_URL", "https://api.tabletcloud.com.br"),
@@ -43,8 +53,8 @@ export const config = {
       // fora disso com "Documento fiscal fora do prazo"); filtramos antes de enviar
       // pra nao desperdicar requisicoes e nao inflar o contador de erros com vendas
       // legitimamente anteriores/posteriores a campanha (ex: cupons de teste antigos).
-      inicio: required("POLGO_CAMPANHA_INICIO", "2026-09-25"),
-      fim: required("POLGO_CAMPANHA_FIM", "2026-10-31"),
+      inicio: required("POLGO_CAMPANHA_INICIO", "2026-11-01"),
+      fim: required("POLGO_CAMPANHA_FIM", "2026-12-31"),
     },
   },
   sync: {
@@ -62,6 +72,9 @@ export const config = {
     keepAliveUrl: process.env.SYNC_KEEPALIVE_URL ?? "",
     keepAliveIntervalMs: optionalInt("SYNC_KEEPALIVE_INTERVAL_MS", 10_000),
     initialLookbackDays: optionalInt("SYNC_INITIAL_LOOKBACK_DAYS", 1),
+    // Quantos minutos antes do cursor cada ciclo volta a buscar, pra pegar cupons editados
+    // depois de impressos (ex: CPF incluido no PDV) quando a edicao passa da meia-noite.
+    editLookbackMinutes: nonNegativeInt("SYNC_EDIT_LOOKBACK_MINUTES", 60),
     runOnStartup: (process.env.SYNC_RUN_ON_STARTUP ?? "true") === "true",
     // Quantos cupons sao processados em paralelo por vez (mapeamento local + leitura/escrita
     // no MySQL). NAO controla a taxa de chamadas a Polgo - isso e' feito a parte pelo

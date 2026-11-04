@@ -34,6 +34,7 @@ export interface TabletCloudFormaPgto {
 
 export interface TabletCloudNotaFiscal {
   chave_acesso?: string;
+  docCliente?: string | null;
   cancelado?: boolean;
   nnf?: number;
   doc_emitido?: boolean;
@@ -58,4 +59,3 @@ export interface TabletCloudCupom {
   formaPgtos?: TabletCloudFormaPgto[];
   notas?: TabletCloudNotaFiscal[];
 }
-

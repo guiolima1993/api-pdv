@@ -9,6 +9,14 @@ export function toDateOnly(d: Date): string {
   );
 }
 
+export function parseDateOnly(raw: string): Date {
+  const date = new Date(`${raw}T00:00:00-03:00`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw) || !Number.isFinite(date.getTime()) || toDateOnly(date) !== raw) {
+    throw new Error("Data invalida: informe um dia existente no formato YYYY-MM-DD");
+  }
+  return date;
+}
+
 /**
  * Converte o `dtmovimento`/`dtabertura`/etc. da TabletCloud (ex.: "2026-09-25T00:00:00")
  * para o formato "YYYY-MM-DD HH:mm:ss" exigido pela Polgo, SEM passar por `new Date()`.
@@ -26,16 +34,19 @@ export function formatTabletCloudDateTime(raw: string): string {
  * pois a TabletCloud limita cupom/get a um intervalo maximo de 10 dias.
  */
 export function chunkDateRange(start: Date, end: Date, maxDays = 9): Array<{ from: Date; to: Date }> {
+  if (!Number.isSafeInteger(maxDays) || maxDays < 0) throw new Error("maxDays deve ser inteiro nao negativo");
   const chunks: Array<{ from: Date; to: Date }> = [];
-  let cursor = new Date(start);
+  if (start > end) return chunks;
+  let cursor = parseDateOnly(toDateOnly(start));
+  const lastDay = parseDateOnly(toDateOnly(end));
 
-  while (cursor <= end) {
-    const chunkEnd = new Date(cursor);
-    chunkEnd.setDate(chunkEnd.getDate() + maxDays);
-    const to = chunkEnd > end ? end : chunkEnd;
+  // A API filtra dias, nao horas. Preservar a hora do cursor pode pular o ultimo
+  // dia quando ele tem um horario menor que o inicio do bloco seguinte.
+  while (cursor <= lastDay) {
+    const chunkEnd = new Date(cursor.getTime() + maxDays * 24 * 60 * 60 * 1000);
+    const to = chunkEnd > lastDay ? lastDay : chunkEnd;
     chunks.push({ from: new Date(cursor), to: new Date(to) });
-    cursor = new Date(to);
-    cursor.setDate(cursor.getDate() + 1);
+    cursor = new Date(to.getTime() + 24 * 60 * 60 * 1000);
   }
 
   return chunks;

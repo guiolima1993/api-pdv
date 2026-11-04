@@ -10,14 +10,21 @@ campanha do sorteio vigente.
 
 1. A cada execução (cron), o serviço busca no TabletCloud
    (`GET cupom/get/{offset}/{dataInicial}/{datafinal}/{filiais}`) todas as
-   vendas emitidas desde a última sincronização bem-sucedida (cursor salvo em
-   SQLite). A API do TabletCloud limita o intervalo a 10 dias e 100 registros
+   vendas emitidas desde a última sincronização bem-sucedida, com sobreposição
+   configurável para edições recentes (cursor salvo em MySQL). A API do
+   TabletCloud limita o intervalo a 10 dias e 100 registros
    por página — o serviço faz o chunking e a paginação automaticamente.
 2. Cada cupom é convertido para o formato esperado pela Polgo
    ([`src/mappers/cupomToDocumentoFiscal.ts`](src/mappers/cupomToDocumentoFiscal.ts)):
-   - `usuario`: CPF/CNPJ do cliente da venda (obrigatório — é o identificador
+   - `usuario`: CPF de pessoa física do consumidor (obrigatório — é o identificador
      usado pela Polgo para vincular a venda ao consumidor no sorteio). Vendas
-     sem CPF/CNPJ identificado são marcadas como `skipped` e não são enviadas.
+     sem CPF identificado são marcadas como `skipped` e não são enviadas.
+     Se o CPF for incluído depois no PDV (a edição é permitida após a impressão)
+     e passar a vir na TabletCloud, a venda é reavaliada e enviada no próximo
+     ciclo que a buscar.
+     O CPF é lido de `clientes[].cpf_cnpj` (cliente não cancelado) ou, na
+     ausência dele, de `notas[].docCliente` de uma nota emitida, autorizada e
+     não cancelada. CNPJ não identifica participante pessoa física.
    - `numeroDocumento`: chave de acesso da nota fiscal quando disponível,
      senão `{filial}-{vendaId}`.
    - `campanha`: ano + identificação configurados via variáveis de ambiente
@@ -54,6 +61,12 @@ Copie `.env.example` para `.env` e preencha:
   cadastrada na Polgo** — rejeições deles por "fora do prazo" viram `skipped`
   terminal.
 - `SYNC_CRON`: frequência de execução (padrão: a cada 10 minutos).
+- `SYNC_EDIT_LOOKBACK_MINUTES` (padrão `60`): quantos minutos antes do último
+  ciclo cada sincronização volta a buscar. Como a TabletCloud só filtra por dia
+  inteiro, isso inclui o dia anterior quando a sobreposição cruza a meia-noite.
+  É a janela de **reconsulta**, não um prazo máximo permitido para editar.
+  Não cobre alterações que só cheguem à API depois dessa janela, nem faz um
+  CPF ausente aparecer na resposta. `0` desativa a sobreposição.
 - `SYNC_KEEPALIVE_URL`: URL pública do próprio serviço (ex.:
   `https://api-pdv.seudominio.com.br/health`). Enquanto uma sincronização roda,
   o processo faz um GET nela a cada 10 s (`SYNC_KEEPALIVE_INTERVAL_MS`) para a
@@ -74,7 +87,77 @@ Copie `.env.example` para `.env` e preencha:
 npm install
 npm run dev          # modo desenvolvimento com reload
 npm run sync:once    # dispara uma sincronização única e finaliza
+npm test            # build + testes isolados, sem APIs ou banco reais
 ```
+
+## Cupons editados após a impressão
+
+Uma venda ignorada por falta de CPF deixa de ser terminal: quando ela volta
+na consulta com CPF, é reavaliada pelas mesmas regras de cancelamento e
+campanha e enviada. Vendas já enviadas não são reinseridas, mesmo se o CPF
+mudar. Corrigir o participante de uma venda **já enviada** exige outro
+procedimento com a Polgo; este fluxo recupera vendas ainda não enviadas.
+
+Para recuperar períodos antigos depois de a TabletCloud disponibilizar as
+correções, use um intervalo explícito. **Este comando envia vendas aptas**,
+respeita os status já gravados e não altera o cursor do cron:
+
+```bash
+npm run sync:once -- --de=2026-11-02 --ate=2026-11-02
+```
+
+### CPF consta no comprovante, mas não vem na API
+
+Reconsultar não permite descobrir um CPF que a API não devolve. O comprovante
+editado pode ser usado como fonte **conferida e autorizada pelo responsável**,
+sem alterar a TabletCloud, a chave da nota, o valor ou a data original da venda.
+Há recuperação em lote para esses casos, não apenas para uma venda específica.
+
+Prepare fora do repositório um JSON privado com a lista de comprovantes
+autorizados. Exemplo com **dados fictícios**:
+
+```json
+[
+  {
+    "vendaId": 123456,
+    "filial": 123,
+    "dataVenda": "2026-11-02",
+    "numeroNota": 1234,
+    "valorTotal": 100.50,
+    "cpf": "01234567890"
+  }
+]
+```
+
+`vendaId` é o `venda_id` da API, que pode ser diferente do número impresso no
+PDV, e só é único junto com `filial`. O CPF deve ser uma string para preservar
+zeros à esquerda. Não coloque esses arquivos no Git.
+
+```bash
+# Somente simula: consulta TabletCloud, valida todo o lote e mostra CPF mascarado.
+# Não escreve no MySQL nem chama a Polgo.
+npm run sync:recuperar-editados -- --arquivo=/caminho/privado/cupons.json
+
+# Envio real: execute somente após conferir os comprovantes e a simulação.
+npm run sync:recuperar-editados -- --arquivo=/caminho/privado/cupons.json --enviar
+```
+
+O envio exige MySQL acessível e a campanha configurada cobrindo a data
+original da venda; ele não ignora a janela nem as rejeições da Polgo.
+Data, valor e número da nota são comparados com a TabletCloud antes de
+enviar. Um bloqueio MySQL compartilhado impede execução simultânea do cron,
+do reprocessamento e da recuperação (todos devem usar esta versão).
+O resultado é salvo em `synced_cupons`, e a origem autorizada do CPF vai
+no campo `extra` da Polgo. A simulação não verifica duplicidade no banco;
+essa verificação acontece no envio real. Se houver falha parcial, os
+sucessos permanecem gravados; corrija a causa e repita o mesmo lote.
+
+Para automatizar os casos ausentes da API, solicite à TabletCloud o campo
+ou endpoint que devolve a inclusão/alteração de CPF **após a impressão** e
+seu prazo de propagação. Informe `venda_id`, `loja_id`, data e nota, com o
+comprovante, e compare `clientes[].cpf_cnpj`, `notas[].docCliente`, detalhe
+`GET cupom/get/{VendaId}/{CodFilial}` e dados fiscais. Não é seguro inferir
+CPF a partir de valor, horário ou cadastro de outro cliente.
 
 ## Build e produção
 
@@ -94,7 +177,14 @@ docker compose up --build -d
 - `GET /health` — healthcheck simples.
 - `GET /sync/status` — contagem de cupons por status.
 - `POST /sync/trigger` — dispara uma sincronização manual. Requer header
-  `X-API-KEY: <ADMIN_API_KEY>`.
+  `X-API-KEY: <ADMIN_API_KEY>`. Com `?de=YYYY-MM-DD&ate=YYYY-MM-DD` (máx. 31
+  dias) reprocessa dias antigos sem mexer no cursor.
+- `GET /sync/errors` — últimos cupons com erro (`X-API-KEY`).
+- `GET /sync/cupom/:filial/:vendaId` — status gravado do cupom (`sent`,
+  `skipped`, `last_error`, `polgo_document_id`) (`X-API-KEY`).
+- `POST /sync/recuperar-editados` — mesma recuperação do script acima, em
+  produção (`X-API-KEY`). Corpo `{ "enviar": false, "cupons": [ ... ] }` (máx.
+  30); sem `"enviar": true` só confere e simula.
 
 ## Pontos em aberto / a validar com os times de negócio
 

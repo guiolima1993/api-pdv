@@ -1,5 +1,7 @@
 import mysql from "mysql2/promise";
+import { createHash } from "crypto";
 import { config } from "./config";
+import { logger } from "./logger";
 
 // Estado do sync (cursor + status de cada cupom) em MySQL: hospedagens gerenciadas
 // tipo a Hostinger nao persistem disco local entre deploys, entao guardar isso em
@@ -29,6 +31,32 @@ const pool = mysql.createPool({
   // o novo gargalo quando o volume de vendas aumentar.
   connectionLimit: 25,
 });
+
+// O script de recuperacao e o cron podem rodar em processos diferentes.
+const syncLockName = `pdv-polgo:${createHash("sha256").update(config.database.name).digest("hex").slice(0, 40)}`;
+
+export async function withSyncLock<T>(work: () => Promise<T>): Promise<T> {
+  const connection = await pool.getConnection();
+  let acquired = false;
+  try {
+    const [rows] = await connection.query<mysql.RowDataPacket[]>(
+      "SELECT GET_LOCK(?, 0) AS acquired", [syncLockName]
+    );
+    acquired = rows[0]?.acquired === 1;
+    if (!acquired) throw new Error("Outra sincronizacao ou recuperacao esta em execucao; tente novamente depois");
+    return await work();
+  } finally {
+    try {
+      if (acquired) await connection.query("SELECT RELEASE_LOCK(?)", [syncLockName]);
+    } catch (err) {
+      // Fechar a conexao libera o lock no MySQL; nao transforma um sync concluido em falha.
+      connection.destroy();
+      logger.warn({ err }, "Falha ao liberar lock do sync; conexao descartada");
+    } finally {
+      connection.release();
+    }
+  }
+}
 
 let readyPromise: Promise<void> | null = null;
 

@@ -1,14 +1,41 @@
 import { config } from "../config";
-import { TabletCloudCupom } from "../types/tabletCloud";
+import { TabletCloudCliente, TabletCloudCupom, TabletCloudNotaFiscal } from "../types/tabletCloud";
 import { PolgoDocumentoFiscalInsertPayload } from "../types/polgo";
 import { formatTabletCloudDateTime } from "../utils/dateUtils";
 
+// Nao alterar o texto: precisa continuar casando com linhas ja gravadas no banco.
+export const SEM_CPF_MARKER = "sem CPF de pessoa fisica do consumidor";
+
 export class UnidentifiedConsumerError extends Error {
   constructor(vendaId: number, lojaId: number) {
-    super(
-      `Venda ${vendaId} (filial ${lojaId}) sem CPF de pessoa fisica do consumidor - nao pode ser enviada a Polgo`
-    );
+    super(`Venda ${vendaId} (filial ${lojaId}) ${SEM_CPF_MARKER} - nao pode ser enviada a Polgo`);
   }
+}
+
+function findClienteComCpf(cupom: TabletCloudCupom): TabletCloudCliente | undefined {
+  return cupom.clientes?.find((c) => {
+    if (c.cancelado || !c.cpf_cnpj) return false;
+    return c.cpf_cnpj.replace(/\D/g, "").length === 11;
+  });
+}
+
+export function isNotaFiscalValida(nota: TabletCloudNotaFiscal): boolean {
+  return Boolean(nota.chave_acesso && nota.doc_emitido && !nota.cancelado &&
+    (nota.status_sefaz ?? "100") === "100");
+}
+
+function findNotaComCpf(cupom: TabletCloudCupom): TabletCloudNotaFiscal | undefined {
+  return cupom.notas?.find(
+    (n) => isNotaFiscalValida(n) && n.docCliente?.replace(/\D/g, "").length === 11
+  );
+}
+
+export function getCpfConsumidor(cupom: TabletCloudCupom): string | undefined {
+  const cliente = findClienteComCpf(cupom);
+  if (cliente?.cpf_cnpj) return cliente.cpf_cnpj.replace(/\D/g, "");
+
+  // A identificacao fiscal pode existir sem um cadastro em clientes.
+  return findNotaComCpf(cupom)?.docCliente?.replace(/\D/g, "");
 }
 
 // Marcador gravado no last_error dos cupons pulados pelo filtro local de janela. O
@@ -42,15 +69,13 @@ export function isDentroDaJanelaDaCampanha(cupom: TabletCloudCupom): boolean {
  */
 export function mapCupomToDocumentoFiscal(
   cupom: TabletCloudCupom,
-  cnpjEmitente: string
+  cnpjEmitente: string,
+  cpfConfirmado?: string
 ): PolgoDocumentoFiscalInsertPayload {
-  const cliente = cupom.clientes?.find((c) => {
-    if (c.cancelado || !c.cpf_cnpj) return false;
-    return c.cpf_cnpj.replace(/\D/g, "").length === 11;
-  });
-  const cpfCnpj = cliente?.cpf_cnpj?.replace(/\D/g, "");
+  const cliente = findClienteComCpf(cupom);
+  const cpfCnpj = cpfConfirmado ?? getCpfConsumidor(cupom);
 
-  if (!cpfCnpj) {
+  if (!cpfCnpj || !/^\d{11}$/.test(cpfCnpj)) {
     throw new UnidentifiedConsumerError(cupom.venda_id, cupom.loja_id);
   }
 
@@ -58,7 +83,9 @@ export function mapCupomToDocumentoFiscal(
     throw new ForaDoPrazoDaCampanhaError(cupom.venda_id, cupom.loja_id, cupom.dtmovimento);
   }
 
-  const chaveAcesso = cupom.notas?.find((n) => n.chave_acesso)?.chave_acesso;
+  const notaComCpf = !cliente && !cpfConfirmado ? findNotaComCpf(cupom) : undefined;
+  const chaveAcesso = notaComCpf?.chave_acesso ?? cupom.notas?.find(isNotaFiscalValida)?.chave_acesso ??
+    cupom.notas?.find((n) => n.chave_acesso)?.chave_acesso;
   const numeroDocumento = chaveAcesso || `${cupom.loja_id}-${cupom.venda_id}`;
 
   const formaPagamento = cupom.formaPgtos?.map((f) => f.nome).filter(Boolean).join(",");
@@ -86,7 +113,9 @@ export function mapCupomToDocumentoFiscal(
     vendedor: cupom.nomeVendedor
       ? { codigo: cupom.codVendedorExterno ? String(cupom.codVendedorExterno) : undefined, nome: cupom.nomeVendedor }
       : undefined,
-    consumidor: cliente?.dadosAdicionais?.nome ? { nome: cliente.dadosAdicionais.nome } : undefined,
-    extra: `TabletCloud venda ${cupom.venda_id} - filial ${cupom.loja_id}`,
+    consumidor: cliente?.cpf_cnpj?.replace(/\D/g, "") === cpfCnpj && cliente?.dadosAdicionais?.nome
+      ? { nome: cliente.dadosAdicionais.nome } : undefined,
+    extra: `TabletCloud venda ${cupom.venda_id} - filial ${cupom.loja_id}` +
+      (cpfConfirmado ? " - CPF confirmado em comprovante editado autorizado" : ""),
   };
 }

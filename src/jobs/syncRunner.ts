@@ -1,7 +1,7 @@
 import axios from "axios";
 import { config } from "../config";
 import { logger } from "../logger";
-import { runSync, SyncSummary } from "../services/syncService";
+import { runSync, SyncRange, SyncSummary } from "../services/syncService";
 import { describeHttpError } from "../utils/errorUtils";
 
 // Guard compartilhado entre o cron interno (scheduler.ts) e o trigger HTTP
@@ -29,10 +29,10 @@ function startKeepAlive(): () => void {
   return () => clearInterval(timer);
 }
 
-async function runGuarded(): Promise<SyncSummary> {
+async function runGuarded(range?: SyncRange): Promise<SyncSummary> {
   const stopKeepAlive = startKeepAlive();
   try {
-    return await runSync();
+    return await runSync(range);
   } finally {
     stopKeepAlive();
   }
@@ -59,13 +59,13 @@ export async function runSyncSafely(): Promise<SyncSummary | null> {
 // Dispara a sincronizacao sem aguardar o resultado (fire-and-forget), pra
 // endpoints HTTP que precisam responder rapido (ex.: cron-job.org com
 // timeout curto). Erros sao apenas logados, nunca propagados.
-export function triggerSyncInBackground(): { accepted: boolean } {
+export function triggerSyncInBackground(range?: SyncRange): { accepted: boolean } {
   if (running) {
     logger.warn("Sincronizacao anterior ainda em execucao, disparo em background ignorado");
     return { accepted: false };
   }
   running = true;
-  runGuarded()
+  runGuarded(range)
     .catch((err) => {
       logger.error({ err: describeHttpError(err) }, "Erro inesperado durante a sincronizacao em background");
     })

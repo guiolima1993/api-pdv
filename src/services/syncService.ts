@@ -8,11 +8,14 @@ import {
   ForaDoPrazoDaCampanhaError,
   isDentroDaJanelaDaCampanha,
   mapCupomToDocumentoFiscal,
+  SEM_CPF_MARKER,
+  getCpfConsumidor,
+  isNotaFiscalValida,
   UnidentifiedConsumerError,
 } from "../mappers/cupomToDocumentoFiscal";
 import { chunkDateRange } from "../utils/dateUtils";
 import { describeHttpError } from "../utils/errorUtils";
-import { getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom } from "../db";
+import { getSyncCursor, getSyncedCupom, setSyncCursor, upsertSyncedCupom, withSyncLock } from "../db";
 import { TabletCloudCupom } from "../types/tabletCloud";
 
 // Processa a lista com no maximo `limit` itens em voo simultaneamente, mantendo a
@@ -90,24 +93,19 @@ function isFalhaDeRedePolgo(err: unknown): boolean {
 
 const VENDA_CANCELADA_MARKER = "Venda cancelada/estornada no PDV";
 
-function temNotaFiscalValida(cupom: TabletCloudCupom): boolean {
-  return (cupom.notas ?? []).some(
-    (n) => n.chave_acesso && n.doc_emitido && !n.cancelado && (n.status_sefaz ?? "100") === "100"
-  );
-}
-
 // A TabletCloud marca `iscancelado` em vendas de mesa com NFC-e autorizada e nao cancelada
 // (ex: item cancelado antes do fechamento). Nesses casos a venda e' valida.
-function isCancelled(cupom: TabletCloudCupom): boolean {
+export function isCancelled(cupom: TabletCloudCupom): boolean {
   if (cupom.isestornado) return true;
-  return Boolean(cupom.iscancelado) && !temNotaFiscalValida(cupom);
+  return Boolean(cupom.iscancelado) && !(cupom.notas ?? []).some(isNotaFiscalValida);
 }
 
-async function processCupom(
+export async function processCupom(
   cupom: TabletCloudCupom,
   cnpjPorFilial: Map<string, string>,
   summary: SyncSummary,
-  breaker: PolgoCircuitBreaker
+  breaker = new PolgoCircuitBreaker(),
+  cpfConfirmado?: string
 ): Promise<void> {
   const existing = await getSyncedCupom(cupom.venda_id, cupom.loja_id);
 
@@ -151,7 +149,16 @@ async function processCupom(
       existing.status === "skipped" &&
       (!existing.last_error || existing.last_error.includes(VENDA_CANCELADA_MARKER)) &&
       !isCancelled(cupom);
-    if (!(puladaPorJanelaLocal && isDentroDaJanelaDaCampanha(cupom)) && !puladaComoCancelada) {
+    // Puladas por falta de CPF e que agora tem CPF: o PDV deixa editar o CPF depois da
+    // venda impressa, e o cupom editado continua valido para a campanha.
+    const puladaSemCpfQueGanhouCpf =
+      existing.status === "skipped" &&
+      (existing.last_error ?? "").includes(SEM_CPF_MARKER) &&
+      Boolean(cpfConfirmado ?? getCpfConsumidor(cupom));
+    if (
+      !(puladaPorJanelaLocal && isDentroDaJanelaDaCampanha(cupom)) &&
+      !puladaComoCancelada && !puladaSemCpfQueGanhouCpf
+    ) {
       return;
     }
   }
@@ -181,7 +188,7 @@ async function processCupom(
       summary.skipped += 1;
       return;
     }
-    const payload = mapCupomToDocumentoFiscal(cupom, cnpjEmitente);
+    const payload = mapCupomToDocumentoFiscal(cupom, cnpjEmitente, cpfConfirmado);
     // So' chega aqui cupom apto (com CPF, dentro da janela). Se a Polgo ja' se mostrou
     // indisponivel neste ciclo, nao gasta 30s de timeout: adia pro proximo ciclo.
     if (breaker.isAberto()) {
@@ -275,15 +282,33 @@ async function processCupom(
   }
 }
 
-export async function runSync(): Promise<SyncSummary> {
+export interface SyncRange {
+  from: Date;
+  to: Date;
+}
+
+export async function runSync(range?: SyncRange): Promise<SyncSummary> {
+  if (range && (
+    !Number.isFinite(range.from.getTime()) || !Number.isFinite(range.to.getTime()) ||
+    range.from > range.to
+  )) {
+    throw new Error("Intervalo de reprocessamento invalido");
+  }
+  return withSyncLock(() => runSyncUnlocked(range));
+}
+
+async function runSyncUnlocked(range?: SyncRange): Promise<SyncSummary> {
   const summary: SyncSummary = { processed: 0, sent: 0, canceled: 0, skipped: 0, errors: 0, deferred: 0 };
   const breaker = new PolgoCircuitBreaker();
 
-  const to = new Date();
-  const cursor = await getSyncCursor();
-  const from = cursor
-    ? new Date(cursor)
-    : new Date(Date.now() - config.sync.initialLookbackDays * 24 * 60 * 60 * 1000);
+  const to = range?.to ?? new Date();
+  const cursor = range ? undefined : await getSyncCursor();
+  // Recua o cursor para continuar enxergando cupons editados depois de impressos (ex: CPF
+  // incluido no PDV) mesmo quando a edicao cai depois da virada do dia: a TabletCloud so
+  // filtra por dia inteiro, entao sem isso o dia anterior nunca mais seria buscado.
+  const from = range?.from ?? (cursor
+    ? new Date(new Date(cursor).getTime() - config.sync.editLookbackMinutes * 60 * 1000)
+    : new Date(Date.now() - config.sync.initialLookbackDays * 24 * 60 * 60 * 1000));
 
   // O painel simplificado da Hostinger so mostra a mensagem, nao os campos estruturados,
   // por isso o range tambem vai embutido diretamente no texto.
@@ -303,7 +328,7 @@ export async function runSync(): Promise<SyncSummary> {
     logger.info({ chunkFrom, chunkTo, total: totalFetched }, "Cupons recebidos da TabletCloud");
   }
 
-  await setSyncCursor(to.toISOString());
+  if (!range) await setSyncCursor(to.toISOString());
   // Resumo embutido no texto pelo mesmo motivo do log de inicio (painel da Hostinger).
   logger.info(
     summary,

@@ -7,7 +7,10 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "sync:once": "ts-node-dev --transpile-only --exit src/scripts/runOnce.ts"
+    "sync:once": "ts-node --transpile-only src/scripts/runOnce.ts",
+    "ver:detalhe": "ts-node-dev --transpile-only --exit src/scripts/verDetalheEnvio.ts",
+    "sync:recuperar-editados": "ts-node --transpile-only src/scripts/recuperarCuponsEditados.ts",
+    "test": "npm run build && node --test test/*.test.cjs"
   },
   "dependencies": {
     "@types/express": "^4.17.21",

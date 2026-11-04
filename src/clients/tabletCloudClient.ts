@@ -125,6 +125,17 @@ export class TabletCloudClient {
     return map;
   }
 
+  async getCupom(vendaId: number, codFilial: number): Promise<TabletCloudCupom> {
+    const token = await this.getAccessToken();
+    const { data } = await this.http.get<TabletCloudCupom | null>(`/cupom/get/${vendaId}/${codFilial}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!data || data.venda_id !== vendaId || data.loja_id !== codFilial) {
+      throw new Error(`Cupom ${vendaId} da filial ${codFilial} nao encontrado ou identidade divergente na TabletCloud`);
+    }
+    return data;
+  }
+
   /**
    * Busca todos os cupons emitidos entre `from` e `to` (inclusive) para as filiais informadas.
    * Divide as filiais em lotes (a API/servidor nao suporta URLs com centenas de codigos)
